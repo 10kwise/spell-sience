@@ -1,112 +1,130 @@
-# WAVEWRIGHT
+# CAMPANARY
 
-You do not cast spells. You build resonators, and then you play them.
+You are a bell-founder. You cast bells in the foundry, and then you ring them
+at the things in the dark.
 
 ```
 pip install -r requirements.txt
 python play.py
 ```
 
-A ring's circumference sets its frequency. Frequency is colour. Colour is
-what a thing is weak to. Wind the ring the other way and every impulse it
-makes reverses. None of that is a lookup table — it is one wave simulation,
-and everything in the game is a consequence of it.
-
-Built on the digital-waveguide simulation specified in
-[`sigil-wave-design.md`](sigil-wave-design.md). The game design, and the
-seven simulation-layer bugs that had to be fixed before any of it worked,
-are in [`GAME_DESIGN.md`](GAME_DESIGN.md).
+A big bell is deep. A small bell is high. **That is all size does** — and
+everything else in the game is a consequence of it, because the pitch of a
+ring really is `c / L` inside one wave simulation and never a lookup table.
 
 ---
 
+## The one sentence
+
+Draw a ring twice as wide and it sounds an octave lower, reaches twice as
+far, and tolls twice as slow. Draw it the other way round and every impulse
+it makes reverses. Ring it hard enough to fold its own metal and it climbs
+an octave — and cracks.
+
+Nobody wrote those rules. They are what a resonant loop is, running on the
+digital-waveguide simulation in [`sigilwave/sim/`](sigilwave/sim/), which is
+unchanged from the original spec and still passes its own 34 checks.
+
 ## The loop
 
-**The Forge** — draw sigils on a bounded canvas. Unlimited undo, a live
-readout of what your drawing actually measures, and a test bench firing real
-pulses at a dummy you can retune. Nothing is at stake here.
+**THE FOUNDRY** — draw on a bounded canvas with a metal budget. The note
+ladder is printed on the canvas at actual size, so "I want that note" and
+"draw this big" are the same instruction. A guitar-tuner readout says which
+note you cast and how many cents flat or sharp. The peal of the room ahead —
+the notes the things down there are actually tuned to — is on the screen
+beside it, so drawing is closing a gap rather than guessing.
 
-**The Field** — you cannot draw here. Take what you built and play it: aim,
-strike, sustain, switch, and stand in the right place. Clear the room,
-choose a reward, go back to the Forge.
+**THE BELFRY** — you cannot draw here. Move, toll, swell, dash. Clear the
+room. Between waves, **the anvil**: twelve seconds to reshape a bell, under
+a clock, with the next room's notes in front of you.
 
-You start with three working sigils, so you can win the first room without
-understanding anything at all. Two of them, **Shove** and **Draw**, are the
-same ring wound in opposite directions. One pushes. One pulls. Everything
-else follows from noticing that.
+An act is three waves and a boss. Three acts.
+
+## Resonance breaks. Force moves.
+
+Nothing has health. Everything has a **crack meter**.
+
+- An **on-note** ring fills it fast. Fill it and the thing **shatters**.
+- An **off-note** ring fills nothing at all — and it *shoves*, hard.
+
+So the wrong note is not weak, it is **a different verb**. Shoving is a real
+kill: things thrown into walls and into each other crack against them, and
+one enemy has no note at all and can only be killed that way. There is no
+penalty for brute force anywhere in the game. There does not need to be one,
+because the fast, beautiful kill is the one that matches.
 
 ## Controls
-
-**Forge**
-
-| | |
-|---|---|
-| `LMB` drag | draw a stroke |
-| `RMB` / `Z` | undo |
-| `1`-`6` | select ink |
-| `TAB` | switch focus slot |
-| `G` / `SPACE` | test-strike / test-sustain |
-| `[` `]` | retune the dummy's band |
-| `,` `.` | move the dummy nearer / further |
-| `I` | toggle the band ruler |
-| `E` | move the ignition point to the nearest node |
-| `N` | name this sigil |
-| `C` / `R` | clear canvas / reset bench |
-| `ESC` | descend into the room |
-
-**Field**
 
 | | |
 |---|---|
 | `WASD` | move |
-| mouse | aim |
-| `LMB` | strike (broadband, cheap) |
-| `RMB` hold | sustain (narrowband, ramps into overdrive, chars the ink) |
-| `1`-`4` / wheel | switch focus |
-| `SHIFT` / `SPACE` | dash |
-| `E` | stamp a relay |
-| `Q` | quench — dump everything you charged |
+| `LMB` tap | toll — a ring, centred on you, that reaches as far as your note does |
+| `LMB` hold | swell — drive the bell past its fold; it climbs an octave and it chars |
+| `LMB` release | let go, all at once |
+| `SPACE` / `SHIFT` | dash — i-frames, cancels anything |
+| `1`-`3` / `RMB` / wheel | swap bell |
 
-## Reading the screen
+There is no aiming. A ring is omnidirectional, so what you are choosing is
+**distance** — and distance is exactly what the note ladder means.
 
-- **Brightness along a stroke** is amplitude. **Hue** is the band it is
-  emitting — which changes live, so overdriving a blue sigil turns it orange
-  in your hands.
-- **A ring around an enemy** is its resonance, in that band's colour. The
-  same six colours as your spectrum bars. Match them.
-- **A flashing node** is a junction folding into saturation — the moment
-  harmonics start.
-- **A shimmer across a gap** is energy tunnelling between two strokes that
-  never touch.
-- **The three small meters** on each focus are charge, saturation, and char.
-  Char is what burns your sigil out.
+## Reading the room
+
+- **The pool you are standing in** is your bell's reach. Its rim is where the
+  ring stops. Anything outside it is a different bell's problem.
+- **The ring closing onto you** is the swell. Toll as it lands and the strike
+  compounds — that reinforcement is the simulation's, not a bonus. On-beat
+  strikes in a row build a **chorus** multiplier.
+- **A pulse around a foe** is its note, expanding on exactly the tempo a bell
+  of that note tolls at. It is also that colour, and it is also humming that
+  pitch. Any one of the three is enough.
+- **A foe drawn hatched and grey** has no note. Nothing will ever ring it.
+- **Your ring cools as it travels** — it leaves white and arrives blue,
+  because the high notes in it die within a body length. That is the whole
+  range law, in one animation.
 
 ## Verify it
 
 ```
-python -m sigilwave.game.playtest    # plays every room with four bots of
-                                     # increasing system knowledge, 3 seeds
-                                     # each; asserts the gates are real
-python -m sigilwave.game.shots       # renders the game to debug_output/
-python -m sigilwave.sim.selftest     # the simulation's own suite (34 checks
-                                     # across 8 files, all still passing —
-                                     # sigilwave/sim/ is unmodified)
+python -m sigilwave.campanary.playtest    # four bots of increasing knowledge
+                                          # play every wave; proves the gates
+python -m sigilwave.campanary.calibrate   # measures the two numbers the game
+                                          # is allowed to put its thumb on
+python -m sigilwave.campanary.smoke       # drives the real app through a run
+python -m sigilwave.campanary.shots       # renders every screen to debug_output/
+python -m sigilwave.sim.selftest          # the simulation's own suite
 ```
+
+The playtest is the one that matters. It reports:
+
+```
+   wave                    masher    ringer     tuner   founder
+   TOTAL                     2/36     14/36     27/36     36/36
+```
+
+A masher who ignores note, beat and range clears 2 of 36. Somebody who
+tunes clears all of them. If those two numbers ever converge, the system is
+decoration and the harness says so.
 
 ## Layout
 
 ```
-play.py                  entry point
-sigilwave/sim/           the wave simulation — unmodified, self-tested
-sigilwave/game/
-  bands.py               the shared vocabulary: six bands, hues, coupling curve
-  sigil.py               drawn ink -> a live instrument you can play
-  inks.py                six materials, one physics knob each
-  combat.py              pulses, resonant damage, antiphase cancellation
-  enemies.py             five archetypes, each a lesson wearing a hitbox
-  field.py               the arena
-  forge.py               the drawing and testing screen
-  viz.py                 drawing the invisible (the highest-leverage file)
-  rooms.py / run.py      progression, rewards, the persistent codex
-  playtest.py            headless balance and regression harness
-sigil_lab.py             the original physics bench, still runnable
+play.py                     entry point
+sigilwave/sim/              the wave simulation - unmodified, self-tested
+sigilwave/campanary/
+  notes.py                  the whole vocabulary: five octaves, and what each means
+  bell.py                   drawn metal -> a resonator you can strike
+  metals.py                 three metals, one knob each
+  rings.py                  the attack: an expanding wavefront that cools
+  foes.py                   six designs, each demanding one specific verb
+  arena.py                  the Belfry - four verbs, no aiming
+  forge.py                  the Foundry and the Anvil: a tuner and a target
+  render.py                 drawing the invisible on the floor
+  audio.py                  every sound synthesised from the note that made it
+  run.py                    acts, waves, rewards
+  playtest.py / calibrate.py / smoke.py / shots.py
+sigilwave/game/             WAVEWRIGHT, the earlier build on the same sim
+                            (python -m sigilwave.game.app)
 ```
+
+The design, and an account of what was wrong with the previous build and why,
+is in [`CAMPANARY.md`](CAMPANARY.md).

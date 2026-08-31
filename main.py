@@ -1,18 +1,6 @@
-import pygame
+"""Alias for `play.py`, kept because the repository shipped with one."""
 
-from sigilwave.game import Game
-
-
-def main() -> None:
-    pygame.init()
-    pygame.display.set_caption("Sigil / Wave")
-    screen = pygame.display.set_mode((1280, 800), pygame.RESIZABLE)
-
-    game = Game(screen)
-    game.run()
-
-    pygame.quit()
-
+from sigilwave.campanary.app import main
 
 if __name__ == "__main__":
     main()
