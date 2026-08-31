@@ -1,4 +1,4 @@
-ssssss"""WAVEWRIGHT — entry point.
+"""WAVEWRIGHT - entry point.
 
     python play.py
 
