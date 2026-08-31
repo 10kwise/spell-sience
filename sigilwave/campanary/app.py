@@ -1,10 +1,17 @@
 """Mode machine, HUD, and the main loop.
 
 The loop is a fixed-step accumulator because a bell's resonance is measured
-in simulation steps: a player on a fast machine and a player on a slow one
+in simulation steps: a player on a fast machine and one on a slow machine
 have to get the same instrument. Hitstop is applied by *withholding* steps
 rather than by scaling dt, so a freeze is a real freeze and never a
 slow-motion smear.
+
+Most of what is new here is teaching. The game was unplayable-by-inspection:
+it had four verbs, a note ladder and a matching rule, and told you none of
+them. Three things fix that and all three are on screen rather than in a
+manual - a title card that states the rule, a **target readout** naming the
+nearest thing's note and which of your bells answers it, and a short chain of
+prompts in the first wave that fire off what the player has actually done.
 """
 
 import math
@@ -18,13 +25,28 @@ from . import audio, notes, render
 from .arena import Belfry, Player, BELL_WORLD_SCALE
 from .forge import Foundry
 from .foes import GreatBell, Twin
-from .notes import NOTE_NAMES, NOTE_SHORT
-from .run import ACTS, Codex, Run
+from .notes import NOTE_NAMES
+from .run import Codex, Session
 
 WIDTH, HEIGHT = 1280, 800
 FIXED_DT = 1 / 120.0
 MAX_FRAME = 0.2
-ANVIL_SECONDS = 12.0
+
+# The first wave walks the player through the four verbs. Each line waits on
+# something they did rather than on a timer, so nobody is ever told to do a
+# thing they have already worked out.
+TUTORIAL = [
+    ("toll", "LEFT CLICK to toll. The ring is your attack - it comes out of you,"
+             " all the way round."),
+    ("reach", "The ring stops at the circle on the floor. Nothing outside it is"
+              " being hit."),
+    ("beat", "Toll as the white ring lands on you. On the beat hits far harder"
+             " - watch CHORUS climb."),
+    ("note", "Everything has a note. Match it and it shatters; miss and you only"
+             " shove it. Press 2 for your other bell."),
+    ("dash", "SPACE dashes through anything. Every wind-up in the game is"
+             " dodgeable."),
+]
 
 
 class App:
@@ -36,72 +58,63 @@ class App:
         self.font = pygame.font.SysFont("consolas", 16)
         self.small = pygame.font.SysFont("consolas", 13)
         self.big = pygame.font.SysFont("consolas", 30, bold=True)
-        self.huge = pygame.font.SysFont("consolas", 54, bold=True)
+        self.huge = pygame.font.SysFont("consolas", 52, bold=True)
         self.clock = pygame.time.Clock()
         self.running = True
 
         self.codex = Codex.load()
-        self.run = None
+        self.session = None
         self.mode = "TITLE"
         self.belfry = None
         self.foundry = None
         self.camera = Camera(*self.screen.get_size())
         self.glow = render.Glow(self.screen.get_size())
         self.time = 0.0
-        self.offers = []
-        self.offer_msg = ""
-        self.flash = 0.0
         self.beat_tick = 0
+        self.tutorial = 0
+        self.prompt = ""
+        self.prompt_t = 0.0
+        self._strike = False
+        self._swap = None
 
     # ------------------------------------------------------------------ flow
 
     def start(self):
-        self.run = Run(self.codex)
+        self.session = Session(self.codex)
+        self.tutorial = 0
         self.enter_foundry(first=True)
 
-    def enter_foundry(self, first=False, anvil=False):
-        self.foundry = Foundry(self.run, (self.font, self.small, self.big),
-                               ANVIL_SECONDS if anvil else None)
+    def enter_foundry(self, first=False):
+        self.foundry = Foundry(self.session, (self.font, self.small, self.big))
         if first:
-            self.foundry.say("two bells are ready. The Toll is four times The Hand, "
-                             "and reaches four times as far.", 8.0)
+            self.foundry.say("two bells are ready. The Toll is four times The Hand,"
+                             " and reaches four times as far. ENTER to go down.", 9.0)
         self.mode = "FOUNDRY"
 
     def enter_belfry(self):
-        spec = self.run.spec
-        # Going down is also going to the forge fire. A bell you cooked in
-        # the last room is not still cooked in the next one - char is a
-        # within-fight resource, and carrying it between waves would turn one
-        # greedy swell into a punishment two minutes later, which is exactly
-        # the kind of delayed consequence this rebuild exists to remove.
-        for b in self.run.bells:
+        spec = self.session.spec
+        # Going down is also going to the forge fire: char is a within-fight
+        # resource, and carrying it between waves would turn one greedy swell
+        # into a punishment two minutes later.
+        for b in self.session.bells:
             b.char = 0.0
             b.cracked = False
-        player = Player(pygame.Vector2(0, 0), self.run.bells)
-        player.hp = self.run.hp
-        player.max_hp = self.run.max_hp
-        self.belfry = Belfry(player, spec, seed=hash((self.run.act, self.run.wave)) & 0xFFFF,
+        player = Player(pygame.Vector2(0, 0), self.session.bells)
+        player.hp = self.session.hp
+        player.max_hp = self.session.max_hp
+        self.belfry = Belfry(player, spec, seed=self.session.wave * 977,
                              on_event=self._event)
         self.camera.snap_to(player.pos)
         self.mode = "BELFRY"
 
     def _event(self, kind, payload):
         if kind == "shatter":
-            self.run.shatters += 1
-            self.flash = 0.55
+            self.session.shatters += 1
 
     def finish_wave(self):
-        self.run.hp = max(15.0, self.belfry.player.hp)
-        nxt = self.run.advance()
-        if nxt == "done":
-            self.mode = "WON"
-            self.codex.end_run(self.run)
-        elif nxt == "reward":
-            self.offers = self.run.offers()
-            self.offer_msg = ""
-            self.mode = "REWARD"
-        else:
-            self.enter_foundry(anvil=True)
+        self.session.hp = max(25.0, self.belfry.player.hp)
+        self.session.advance()
+        self.enter_foundry()
 
     # ---------------------------------------------------------------- input
 
@@ -122,9 +135,7 @@ class App:
                 self.foundry.event(e, self.screen)
             elif self.mode == "BELFRY":
                 self._belfry_event(e)
-            elif self.mode == "REWARD":
-                self._reward_event(e)
-            elif self.mode in ("DEAD", "WON"):
+            elif self.mode == "DEAD":
                 if e.type == pygame.KEYDOWN:
                     if e.key == pygame.K_ESCAPE:
                         self.running = False
@@ -148,23 +159,11 @@ class App:
         elif e.type == pygame.MOUSEWHEEL:
             self._swap = (p.active + (1 if e.y > 0 else -1)) % max(1, len(p.bells))
 
-    def _reward_event(self, e):
-        if e.type != pygame.KEYDOWN:
-            return
-        if e.key in (pygame.K_1, pygame.K_2):
-            i = e.key - pygame.K_1
-            if i < len(self.offers):
-                self.offer_msg = self.run.take(self.offers[i][0])
-                self.offers = []
-                audio.ui(True)
-        elif self.offers == [] and e.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE):
-            self.enter_foundry(anvil=False)
-
     # --------------------------------------------------------------- update
 
     def update(self, dt):
         self.time += dt
-        self.flash = max(0.0, self.flash - dt * 3.0)
+        self.prompt_t = max(0.0, self.prompt_t - dt)
         if self.mode == "FOUNDRY":
             keys = pygame.key.get_pressed()
             self.foundry.update(dt, keys[pygame.K_SPACE])
@@ -182,32 +181,30 @@ class App:
         )
         holding = pygame.mouse.get_pressed()[0]
         dash = keys[pygame.K_SPACE] or keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
-        strike = getattr(self, "_strike", False)
-        swap = getattr(self, "_swap", None)
-        self._strike = False
-        self._swap = None
+        strike, swap = self._strike, self._swap
+        self._strike, self._swap = False, None
 
         if b.hitstop > 0.0:
             b.hitstop = max(0.0, b.hitstop - dt)
-            # Still poll input during a freeze so a queued strike is not lost.
             if strike:
-                self._strike = True
+                self._strike = True      # never eat a queued strike
             return
 
         b.update(dt, move, strike, holding, dash, swap)
         self._metronome(b)
+        self._teach(b)
 
         self.camera.follow(b.player.pos + b.player.vel * 0.16, min(1.0, 9.0 * dt))
         if b.cleared:
             self.finish_wave()
         elif b.failed:
             self.mode = "DEAD"
-            self.codex.end_run(self.run)
+            self.codex.end(self.session)
 
     def _metronome(self, b):
-        """A tick on the bell's own pulse. This is the only sound in the game
-        that is not caused by something happening, and it is what turns the
-        beat from a thing on screen into a thing in the room."""
+        """A tick on the held bell's own pulse. The only sound in the game
+        not caused by something happening, and what turns the beat from a
+        thing on screen into a thing in the room."""
         bell = b.player.bell
         if bell is None or bell.is_empty or bell.period <= 1e-6:
             return
@@ -215,6 +212,31 @@ class App:
         if n != self.beat_tick:
             self.beat_tick = n
             audio.tick(False)
+
+    def _teach(self, b):
+        """Advance the first-wave prompts off what the player has done."""
+        if self.session.wave > 0 or self.tutorial >= len(TUTORIAL):
+            return
+        p = b.player
+        key = TUTORIAL[self.tutorial][0]
+        done = (
+            (key == "toll" and p.tolls >= 2)
+            or (key == "reach" and p.tolls >= 5)
+            or (key == "beat" and p.chorus >= 2)
+            or (key == "note" and any(f.crack > 0.15 for f in b.foes))
+            or (key == "dash" and p.dash_cd > 0.0)
+        )
+        if self.prompt_t <= 0.0 and not done:
+            self.prompt = TUTORIAL[self.tutorial][1]
+            self.prompt_t = 0.6
+        if done:
+            self.tutorial += 1
+            self.prompt_t = 0.0
+            if self.tutorial < len(TUTORIAL):
+                self.prompt = TUTORIAL[self.tutorial][1]
+                self.prompt_t = 0.6
+            else:
+                self.prompt = ""
 
     # ----------------------------------------------------------------- draw
 
@@ -227,23 +249,17 @@ class App:
             self.foundry.draw(s)
         elif self.mode == "BELFRY":
             self._draw_belfry(s)
-        elif self.mode == "REWARD":
-            self._draw_reward(s)
         elif self.mode == "DEAD":
-            self._draw_end(s, "THE BELL IS SILENT", (240, 130, 120))
-        elif self.mode == "WON":
-            self._draw_end(s, "THE TOWER IS QUIET", (170, 240, 190))
+            self._draw_end(s)
         pygame.display.flip()
 
     def _draw_belfry(self, s):
-        b = self.belfry
-        cam = self.camera
-        shake = b.shake
-        if shake > 0.0:
-            cam.pos += pygame.Vector2(random.uniform(-1, 1), random.uniform(-1, 1)) * shake * 10
+        b, cam = self.belfry, self.camera
+        if b.shake > 0.0:
+            cam.pos += pygame.Vector2(random.uniform(-1, 1),
+                                      random.uniform(-1, 1)) * b.shake * 11
 
         render.draw_floor(s, cam, b)
-        render.draw_stains(s, cam, b)
         self.glow.clear()
 
         p = b.player
@@ -260,6 +276,7 @@ class App:
         for f in b.foes:
             render.draw_foe(s, self.glow, cam, f, b.time)
 
+        render.draw_hazards(s, self.glow, cam, b)
         for r in b.rings:
             render.draw_ring(self.glow, cam, r)
         for r in b.hostile:
@@ -267,13 +284,11 @@ class App:
 
         render.draw_player(s, self.glow, cam, p, bell, b.time)
         render.draw_marks(s, self.glow, cam, b)
-        render.draw_shards(s, cam, b)
+        b.fx.draw(s, self.glow, cam)
+        render.draw_offscreen(s, self.glow, cam, b)
         self.glow.blit_onto(s)
-
-        if self.flash > 0.0:
-            veil = pygame.Surface(s.get_size(), pygame.SRCALPHA)
-            veil.fill((255, 255, 255, int(60 * self.flash)))
-            s.blit(veil, (0, 0))
+        b.fx.draw_washes(s)
+        b.fx.draw_vignettes(s)
 
         self._draw_hud(s, b)
 
@@ -283,82 +298,141 @@ class App:
         w, h = s.get_size()
         p = b.player
 
-        # Health. One bar, top left, and nothing else up there.
-        pygame.draw.rect(s, (34, 38, 48), (18, 18, 260, 12))
-        frac = max(0.0, p.hp / p.max_hp)
-        col = (226, 236, 250) if frac > 0.35 else (250, 120, 108)
-        pygame.draw.rect(s, col, (18, 18, int(260 * frac), 12))
-        pygame.draw.rect(s, (60, 68, 84), (18, 18, 260, 12), 1)
+        # Health. Segmented, because three or four hits kill and a bar of
+        # pixels does not tell you how many you have left.
+        hits = 4
+        seg = 62
+        for i in range(hits):
+            x = 18 + i * (seg + 4)
+            full = p.hp / p.max_hp > i / hits
+            frac = max(0.0, min(1.0, (p.hp / p.max_hp - i / hits) * hits))
+            pygame.draw.rect(s, (32, 36, 46), (x, 18, seg, 13))
+            if frac > 0:
+                col = (232, 240, 252) if p.hp / p.max_hp > 0.34 else (252, 116, 104)
+                pygame.draw.rect(s, col, (x, 18, int(seg * frac), 13))
+            pygame.draw.rect(s, (62, 70, 86), (x, 18, seg, 13), 1)
 
-        # The bells. Note name, tempo, char, and which one is in hand.
+        # The bells.
         y = 44
         for i, bell in enumerate(p.bells):
-            box = pygame.Rect(18, y, 260, 40)
+            if bell.is_empty:
+                continue
+            box = pygame.Rect(18, y, 268, 40)
             if i == p.active:
                 pygame.draw.rect(s, (24, 29, 39), box)
-                pygame.draw.rect(s, (92, 106, 130), box, 1)
-            name = bell.name if bell else "empty"
-            note_col = bell.color if (bell and bell.has_loop) else (100, 108, 124)
-            label = f"{i + 1} {name}"
-            if bell is not None and bell.cracked:
-                label += "  CRACKED"
-                note_col = (240, 120, 110)
-            s.blit(self.small.render(label, True, (206, 218, 234)), (26, y + 5))
-            if bell is not None and bell.has_loop:
-                sub = f"{notes.note_name(bell.note)}  {int(bell.reach)}px"
-                s.blit(self.small.render(sub, True, note_col), (26, y + 21))
-                # char
+                pygame.draw.rect(s, (96, 112, 138), box, 1)
+            col = bell.color if bell.has_loop else (100, 108, 124)
+            label = f"{i + 1} {bell.name}"
+            if bell.cracked:
+                label += "   CRACKED"
+                col = (245, 120, 108)
+            s.blit(self.small.render(label, True, (208, 220, 236)), (26, y + 5))
+            if bell.has_loop:
+                s.blit(self.small.render(
+                    f"{notes.note_name(bell.note)}  {int(bell.reach)}px", True, col),
+                    (26, y + 21))
                 ch = min(1.0, bell.char)
                 if ch > 0.02:
-                    pygame.draw.rect(s, (44, 32, 30), (172, y + 26, 96, 5))
+                    pygame.draw.rect(s, (44, 32, 30), (180, y + 26, 96, 5))
                     pygame.draw.rect(s, (245, 150, 110) if ch < 0.85 else (255, 90, 80),
-                                     (172, y + 26, int(96 * ch), 5))
-            y += 46
+                                     (180, y + 26, int(96 * ch), 5))
+            y += 44
 
-        # The chorus. The only number that goes up because of timing.
         if p.chorus > 0:
-            mult = p.chorus_mult
-            t = self.big.render(f"x{mult:0.2f}", True, render.HOT)
-            s.blit(t, (18, y + 10))
-            s.blit(self.small.render("CHORUS", True, (180, 196, 220)),
-                   (24 + t.get_width(), y + 24))
+            t = self.big.render(f"x{p.chorus_mult:0.2f}", True, render.HOT)
+            s.blit(t, (18, y + 8))
+            s.blit(self.small.render("CHORUS", True, (182, 198, 222)),
+                   (24 + t.get_width(), y + 22))
 
-        # Where you are.
-        lab = self.small.render(self.run.label, True, (140, 154, 176))
+        self._draw_target(s, b, w)
+
+        lab = self.small.render(self.session.label, True, (142, 156, 178))
         s.blit(lab, (w - lab.get_width() - 20, 20))
-        room = self.small.render(b.spec.get("name", ""), True, (196, 208, 226))
+        room = self.small.render(b.spec.get("name", ""), True, (198, 210, 228))
         s.blit(room, (w - room.get_width() - 20, 38))
-        left = self.small.render(f"{len(b.foes)} left", True, (140, 154, 176))
+        left = self.small.render(f"{len(b.foes)} left", True, (142, 156, 178))
         s.blit(left, (w - left.get_width() - 20, 56))
 
-        # The boss's call, spelled out - it is a pitch, so it is named.
         if b.announce is not None and b.announce_t > 0.0:
-            n = b.announce
-            t = self.huge.render(NOTE_NAMES[n], True, notes.NOTE_COLORS[n])
-            sub = self.small.render("answer it", True, (200, 210, 226))
-            box = pygame.Rect(w // 2 - t.get_width() // 2 - 26, 66,
-                              t.get_width() + 52, t.get_height() + 30)
-            veil = pygame.Surface(box.size, pygame.SRCALPHA)
-            veil.fill((8, 9, 13, 205))
-            s.blit(veil, box.topleft)
-            pygame.draw.rect(s, notes.NOTE_COLORS[n], box, 1)
-            s.blit(t, (w // 2 - t.get_width() // 2, 70))
-            s.blit(sub, (w // 2 - sub.get_width() // 2, 70 + t.get_height()))
+            self._banner_note(s, w, b.announce)
 
         if b.banner_t > 0.0:
             a = min(1.0, b.banner_t / 1.2)
             t = self.big.render(b.banner, True, render.lerp(render.BG, (240, 246, 255), a))
-            s.blit(t, (w // 2 - t.get_width() // 2, h // 2 - 150))
+            s.blit(t, (w // 2 - t.get_width() // 2, h // 2 - 160))
 
-        if b.lesson_t > 0.0:
-            a = min(1.0, b.lesson_t / 1.0)
-            t = self.font.render(b.lesson, True,
-                                 render.lerp(render.BG, (255, 224, 158), a))
-            s.blit(t, (w // 2 - t.get_width() // 2, h - 84))
+        line = self.prompt if self.prompt_t > 0.0 else (b.lesson if b.lesson_t > 0 else "")
+        col = (180, 224, 255) if self.prompt_t > 0.0 else (255, 224, 158)
+        if line:
+            t = self.font.render(line, True, col)
+            box = pygame.Rect(w // 2 - t.get_width() // 2 - 16, h - 92,
+                              t.get_width() + 32, t.get_height() + 14)
+            veil = pygame.Surface(box.size, pygame.SRCALPHA)
+            veil.fill((8, 10, 14, 190))
+            s.blit(veil, box.topleft)
+            s.blit(t, (w // 2 - t.get_width() // 2, h - 85))
 
-        keys = "WASD move    LMB toll / hold to swell    SPACE dash    1-2 / RMB swap"
-        t = self.small.render(keys, True, (86, 96, 114))
+        keys = "WASD move    LMB toll / hold to swell    SPACE dash    1-3 swap bell"
+        t = self.small.render(keys, True, (88, 98, 116))
         s.blit(t, (w // 2 - t.get_width() // 2, h - 26))
+
+    def _draw_target(self, s, b, w):
+        """What the nearest thing is, and which bell answers it.
+
+        The single clearest teaching device in the game. Everything needed to
+        play correctly was already on screen - a colour, a tempo, a hum - and
+        a new player has no idea any of it means anything. This says it in
+        words for as long as it takes to stop needing to.
+        """
+        p = b.player
+        foe = None
+        best = 1e18
+        for f in b.foes:
+            d = (f.pos - p.pos).length_squared()
+            if d < best:
+                foe, best = f, d
+        if foe is None:
+            return
+
+        x, y = w // 2 - 150, 18
+        pygame.draw.rect(s, (14, 17, 23), (x, y, 300, 46))
+        pygame.draw.rect(s, (46, 54, 68), (x, y, 300, 46), 1)
+
+        name = self.small.render(foe.label.upper(), True, (206, 218, 234))
+        s.blit(name, (x + 12, y + 6))
+
+        if foe.note < 0:
+            verdict, col = "NO NOTE - SHOVE IT", (176, 182, 194)
+        elif not foe.crackable:
+            verdict, col = "SEALED - ANSWER ITS PHRASE", (206, 200, 160)
+        else:
+            tag = notes.NOTE_NAMES[foe.note]
+            answer = -1
+            for i, bl in enumerate(p.bells):
+                if bl.has_loop and abs(bl.note - foe.note) < 0.45:
+                    answer = i
+                    break
+            held = p.bell
+            if held is not None and held.has_loop and abs(held.note - foe.note) < 0.45:
+                verdict, col = f"{tag} - MATCHED", (150, 245, 170)
+            elif answer >= 0:
+                verdict, col = f"{tag} - PRESS {answer + 1}", (255, 216, 130)
+            else:
+                verdict, col = f"{tag} - NO BELL FOR IT", (250, 140, 124)
+        s.blit(self.small.render(verdict, True, col), (x + 12, y + 25))
+        pygame.draw.circle(s, foe.color, (x + 284, y + 23), 8)
+
+    def _banner_note(self, s, w, n):
+        t = self.huge.render(NOTE_NAMES[n], True, notes.NOTE_COLORS[n])
+        sub = self.small.render("answer it", True, (200, 210, 226))
+        box = pygame.Rect(w // 2 - t.get_width() // 2 - 26, 76,
+                          t.get_width() + 52, t.get_height() + 30)
+        veil = pygame.Surface(box.size, pygame.SRCALPHA)
+        veil.fill((8, 9, 13, 210))
+        s.blit(veil, box.topleft)
+        pygame.draw.rect(s, notes.NOTE_COLORS[n], box, 1)
+        s.blit(t, (w // 2 - t.get_width() // 2, 80))
+        s.blit(sub, (w // 2 - sub.get_width() // 2, 80 + t.get_height()))
 
     # --------------------------------------------------------------- screens
 
@@ -367,11 +441,9 @@ class App:
         w, h = s.get_size()
         self.glow.clear()
 
-        # Five rings, each half the last: the entire system, as a picture,
-        # before a word of text.
-        cx, cy = w // 2, h // 2 - 40
+        cx, cy = w // 2, h // 2 + 30
         for i in range(notes.N_NOTES):
-            r = notes.NOTE_RADIUS[i] * 1.5
+            r = notes.NOTE_RADIUS[i] * 1.35
             a = 0.30 + 0.25 * math.sin(self.time * 1.6 - i * 0.7)
             pygame.draw.circle(self.glow.surf,
                                (*render.scale(notes.NOTE_COLORS[i], a), 255),
@@ -379,64 +451,53 @@ class App:
         self.glow.blit_onto(s)
 
         t = self.huge.render("CAMPANARY", True, (238, 244, 255))
-        s.blit(t, (cx - t.get_width() // 2, 70))
+        s.blit(t, (cx - t.get_width() // 2, 54))
         for i, line in enumerate([
             "A big bell is deep. A small bell is high. That is all size does.",
             "Cast them in the foundry. Ring them at the things in the dark.",
-            "",
-            "Resonance breaks. Force moves. Pick one.",
         ]):
-            col = (150, 164, 186) if i < 3 else (226, 200, 140)
-            r = self.font.render(line, True, col)
-            s.blit(r, (cx - r.get_width() // 2, 132 + i * 22))
+            r = self.font.render(line, True, (152, 166, 188))
+            s.blit(r, (cx - r.get_width() // 2, 116 + i * 22))
+
+        rules = [
+            ("RESONANCE BREAKS", "Match a thing's note and it shatters - and heals you."),
+            ("FORCE MOVES", "Any other note only shoves. Shove things into walls."),
+            ("SIZE IS REACH", "Your ring stops at the circle on the floor."),
+            ("THE BEAT", "Toll as the white ring lands. Chained, it doubles."),
+        ]
+        y = 186
+        for head, body in rules:
+            a = self.font.render(head, True, (226, 236, 250))
+            b = self.small.render(body, True, (140, 154, 176))
+            s.blit(a, (cx - 300, y))
+            s.blit(b, (cx - 300 + 200, y + 3))
+            y += 26
+
+        keys = "WASD move    LMB toll, hold to swell    SPACE dash    1-3 swap bell"
+        r = self.small.render(keys, True, (120, 134, 156))
+        s.blit(r, (cx - r.get_width() // 2, y + 16))
 
         msg = "press any key" if not self.codex.runs else \
-            f"press any key   -   {self.codex.runs} runs, {self.codex.shatters} shattered"
-        r = self.font.render(msg, True, (200, 212, 230))
-        s.blit(r, (cx - r.get_width() // 2, h - 96))
+            f"press any key   -   best wave {self.codex.best + 1}, {self.codex.shatters} shattered"
+        r = self.font.render(msg, True, (204, 216, 234))
+        s.blit(r, (cx - r.get_width() // 2, h - 62))
 
-    def _draw_reward(self, s):
+    def _draw_end(self, s):
         s.fill(render.BG)
         w, h = s.get_size()
-        t = self.big.render(f"{self.run.act_name} IS QUIET", True, (232, 240, 252))
-        s.blit(t, (w // 2 - t.get_width() // 2, 120))
-
-        if self.offers:
-            for i, (kind, label, desc) in enumerate(self.offers):
-                y = 240 + i * 110
-                box = pygame.Rect(w // 2 - 320, y, 640, 84)
-                pygame.draw.rect(s, (18, 21, 29), box)
-                pygame.draw.rect(s, (70, 82, 102), box, 1)
-                s.blit(self.big.render(f"{i + 1}", True, (150, 168, 196)), (box.left + 20, y + 22))
-                s.blit(self.font.render(label, True, (232, 240, 252)), (box.left + 70, y + 22))
-                s.blit(self.small.render(desc, True, (140, 154, 176)), (box.left + 70, y + 46))
-        else:
-            t = self.font.render(self.offer_msg, True, (255, 224, 160))
-            s.blit(t, (w // 2 - t.get_width() // 2, 260))
-            t = self.small.render("ENTER - to the foundry", True, (150, 164, 186))
-            s.blit(t, (w // 2 - t.get_width() // 2, 320))
-
-    def _draw_end(self, s, title, col):
-        s.fill(render.BG)
-        w, h = s.get_size()
-        t = self.huge.render(title, True, col)
+        t = self.huge.render("THE BELL IS SILENT", True, (240, 130, 120))
         s.blit(t, (w // 2 - t.get_width() // 2, h // 2 - 90))
-        lines = [
-            f"{self.run.act_name}, wave {self.run.wave + 1}" if self.run else "",
-            f"{self.run.shatters} shattered" if self.run else "",
-            "",
-            "any key",
-        ]
-        for i, line in enumerate(lines):
-            r = self.font.render(line, True, (150, 164, 186))
+        for i, line in enumerate([
+            f"wave {self.session.wave + 1}   -   {self.session.shatters} shattered",
+            "", "any key",
+        ]):
+            r = self.font.render(line, True, (152, 166, 188))
             s.blit(r, (w // 2 - r.get_width() // 2, h // 2 - 10 + i * 24))
 
     # ----------------------------------------------------------------- loop
 
     def run_loop(self):
         acc = 0.0
-        self._strike = False
-        self._swap = None
         while self.running:
             frame = min(MAX_FRAME, self.clock.tick(240) / 1000.0)
             self.handle()

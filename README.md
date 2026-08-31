@@ -27,31 +27,44 @@ unchanged from the original spec and still passes its own 34 checks.
 
 ## The loop
 
-**THE FOUNDRY** — draw on a bounded canvas with a metal budget. The note
-ladder is printed on the canvas at actual size, so "I want that note" and
-"draw this big" are the same instruction. A guitar-tuner readout says which
-note you cast and how many cents flat or sharp. The peal of the room ahead —
-the notes the things down there are actually tuned to — is on the screen
-beside it, so drawing is closing a gap rather than guessing.
+**THE FOUNDRY** — cast bells out of **shapes**, not freehand scribbles:
+
+| | |
+|---|---|
+| `1` **RING** | press at the centre, drag out. The radius **snaps to the notes**, which are printed on the canvas at actual size, so "cast a TENOR" is one gesture that cannot miss. |
+| `2` **ARC** | drag out, then sweep the mouse round. The arc follows your hand and the direction you sweep *is* the winding — keep going past a full turn and it closes into a bell. |
+| `3` **LINE** | a horn. Snaps to 15° and to the ends of existing strokes. |
+| `4` **FREE** | freehand, with assisted closure. |
+
+Nothing is final. **Hover a stroke and the wheel retunes it in place** while
+the tuner needle moves under your hand. `F` flips its winding, `X` deletes
+it, `SHIFT`+drag moves it.
+
+The readout is a **guitar tuner** — a needle, a note name, cents flat or
+sharp — and the notes the next room is actually tuned to are marked on it.
+And the wave the simulation is running is drawn *in the metal*: strike the
+bell and watch the pulse race round the ring and stand.
 
 **THE BELFRY** — you cannot draw here. Move, toll, swell, dash. Clear the
-room. Between waves, **the anvil**: twelve seconds to reshape a bell, under
-a clock, with the next room's notes in front of you.
-
-An act is three waves and a boss. Three acts.
+room, go back up. Waves escalate and keep coming.
 
 ## Resonance breaks. Force moves.
 
 Nothing has health. Everything has a **crack meter**.
 
-- An **on-note** ring fills it fast. Fill it and the thing **shatters**.
+- An **on-note** ring fills it fast. Fill it and the thing **shatters** — and
+  a resonant shatter is the only thing in the game that **heals you**.
 - An **off-note** ring fills nothing at all — and it *shoves*, hard.
 
 So the wrong note is not weak, it is **a different verb**. Shoving is a real
 kill: things thrown into walls and into each other crack against them, and
-one enemy has no note at all and can only be killed that way. There is no
-penalty for brute force anywhere in the game. There does not need to be one,
-because the fast, beautiful kill is the one that matches.
+one enemy has no note at all and can only die that way. But a slam does not
+feed you, so a player who never learns to tune bleeds out however well they
+shove. There is no penalty for brute force anywhere in the game — the game
+simply pays for the play it wants to teach.
+
+Three or four connected attacks kill you. Everything telegraphs; every
+telegraph is dodgeable.
 
 ## Controls
 
@@ -62,7 +75,7 @@ because the fast, beautiful kill is the one that matches.
 | `LMB` hold | swell — drive the bell past its fold; it climbs an octave and it chars |
 | `LMB` release | let go, all at once |
 | `SPACE` / `SHIFT` | dash — i-frames, cancels anything |
-| `1`-`3` / `RMB` / wheel | swap bell |
+| `1`-`3` / `Q` / `RMB` / wheel | swap bell |
 
 There is no aiming. A ring is omnidirectional, so what you are choosing is
 **distance** — and distance is exactly what the note ladder means.
@@ -74,9 +87,16 @@ There is no aiming. A ring is omnidirectional, so what you are choosing is
 - **The ring closing onto you** is the swell. Toll as it lands and the strike
   compounds — that reinforcement is the simulation's, not a bonus. On-beat
   strikes in a row build a **chorus** multiplier.
-- **A pulse around a foe** is its note, expanding on exactly the tempo a bell
-  of that note tolls at. It is also that colour, and it is also humming that
-  pitch. Any one of the three is enough.
+- **The ring closing on a foe** is both its note *and* its attack clock. It
+  closes on exactly the tempo a bell of that note tolls at, and the thing
+  attacks the frame it lands — so identifying it and knowing when to move are
+  one act. A TENOR enemy swings on a slow 0.8s beat; a CHIME one comes at you
+  twice as often. It is also that colour and it is also humming that pitch.
+- **A bright bracket** collapsing onto a foe is a committed wind-up. Dash it.
+- **A foe trailing white** has been shoved hard enough that hitting something
+  will crack it. It is a projectile now.
+- **An arrow at the screen edge** is something you cannot see, in its own
+  colour, brightening as its attack lands.
 - **A foe drawn hatched and grey** has no note. Nothing will ever ring it.
 - **Your ring cools as it travels** — it leaves white and arrives blue,
   because the high notes in it die within a body length. That is the whole
@@ -98,12 +118,12 @@ The playtest is the one that matters. It reports:
 
 ```
    wave                    masher    ringer     tuner   founder
-   TOTAL                     3/36     12/36     27/36     36/36
+   TOTAL                     2/33     13/33     24/33     31/33
 ```
 
-A masher who ignores note, beat and range clears 3 of 36. Somebody who
-tunes clears all of them. If those two numbers ever converge, the system is
-decoration and the harness says so.
+A masher who ignores note, beat and range clears 2 of 33. Somebody who tunes
+and casts for the room clears 31. If those two numbers ever converge, the
+system is decoration and the harness says so.
 
 ## Layout
 
@@ -117,10 +137,11 @@ sigilwave/campanary/
   rings.py                  the attack: an expanding wavefront that cools
   foes.py                   six designs, each demanding one specific verb
   arena.py                  the Belfry - four verbs, no aiming
-  forge.py                  the Foundry and the Anvil: a tuner and a target
+  fx.py                     particles: a matched hit and a wrong one look different
+  forge.py                  the Foundry: shape tools, a tuner and a target
   render.py                 drawing the invisible on the floor
   audio.py                  every sound synthesised from the note that made it
-  run.py                    acts, waves, rewards
+  run.py                    the wave list, and deliberately nothing else
   playtest.py / calibrate.py / smoke.py / shots.py
 sigilwave/game/             WAVEWRIGHT, the earlier build on the same sim
                             (python -m sigilwave.game.app)

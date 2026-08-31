@@ -57,7 +57,7 @@ class Ring:
     __slots__ = (
         "origin", "r", "prev_r", "bands", "max_r", "push", "hostile",
         "bias", "bias_strength", "spent", "hit", "born", "power", "note",
-        "chorus", "on_beat", "source",
+        "chorus", "on_beat", "source", "damage",
     )
 
     def __init__(self, origin, bands, push=1.0, hostile=False,
@@ -72,6 +72,7 @@ class Ring:
         self.chorus = chorus
         self.on_beat = on_beat
         self.source = source
+        self.damage = 22.0
         self.r = 0.0
         self.prev_r = 0.0
         self.spent = False
@@ -125,14 +126,23 @@ class Ring:
         return [b * lean for b in survived(self.bands, d)]
 
     def shove_at(self, pos) -> pygame.Vector2:
-        """Force is radial, and its sign is the winding of the ring that
-        made it: a bell wound one way blows outward, the same bell wound the
-        other way drags inward. Nobody wrote that as a spell type."""
+        """Force is radial, and its sign is the winding of the ring that made
+        it: a bell wound one way blows outward, the same bell wound the other
+        way drags inward. Nobody wrote that as a spell type.
+
+        The chorus multiplies it, exactly as it multiplies crack. Without
+        that, the beat only paid off in the resonance lane and the force lane
+        stayed a flat, fiddly chore - measured, a Deadweight wave took the
+        harness sixty seconds because a point-blank toll threw the thing at
+        543px/s and a slam needs speed. Playing in time now throws things
+        properly, so force is a skill rather than a slow patch of the game.
+        """
         to = pygame.Vector2(pos) - self.origin
         if to.length_squared() < 1e-9:
             return pygame.Vector2(0, 0)
         arrived = sum(self.spectrum_at(pos))
-        return to.normalize() * arrived * SHOVE_SCALE * self.push
+        groove = 1.0 + (self.chorus - 1.0) * 0.6
+        return to.normalize() * arrived * SHOVE_SCALE * self.push * groove
 
     def color_at(self, radius: float) -> tuple:
         left = survived(self.bands, radius)

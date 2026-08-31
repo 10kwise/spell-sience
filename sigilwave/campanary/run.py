@@ -1,86 +1,58 @@
-"""A run: what you meet, in what order, and why that order.
+"""Waves, and deliberately nothing else.
 
-Every wave introduces exactly one idea and then stops. The ordering is
-dependency-first rather than difficulty-first - a wave is only allowed to
-appear once every idea it leans on has already been survived somewhere
-earlier:
+This used to be a roguelite: three acts, a reward screen between them, metals
+unlocked as loot, an anvil on a twelve-second clock. That structure is not
+what the game is for and it was absorbing effort that belongs in the two
+things that actually carry it - shaping a bell, and fighting with it.
 
-    1  strike, and the beat                (nothing)
-    2  force moves what resonance cannot   (needs 1)
-    3  a high note has no reach            (needs 1)
-    B  answer a phrase in its own note     (needs 1, 3)
-    4  break a bond before you ring it     (needs 2)
-    5  swell until the bell climbs         (needs 3)
+So it is now a list. Everything is unlocked from the first second, you carry
+three bells, the budget never changes, and the Foundry is open between every
+wave with no timer on it. The waves escalate by putting more and harder
+things in the room, which is the cheapest structure that still produces a
+difficulty curve, and none of it is precious: change a line in WAVES and the
+game is different.
 
-An act is three waves and a boss, about five minutes. Not an endless
-corridor: a roguelite that keeps introducing mechanics forever never lets
-the player feel competent, and competence is the thing this game is selling.
-
-Between every wave is **the anvil** - twelve seconds to reshape a bell,
-under a clock, with the next room's notes shown. That is the fix for the old
-build's worst structural problem: the authoring layer used to sit minutes
-away from the consequence of using it, so it read as homework. Twelve
-seconds after being unable to touch something is when a player actually
-wants to change their tool.
+The only rule the ordering obeys is dependency - a wave may not introduce a
+foe whose answer has not already been available. That is not level design, it
+is just not teaching things in the wrong order.
 """
 
 import json
 import os
-import random
 
-from . import notes
-from .metals import UNLOCK_ORDER
+from .metals import ALL_METALS
 from .starters import METAL_BUDGET, starting_bells
 
 SAVE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "save", "campanary.json")
 
-ACTS = [
-    {
-        "name": "THE NAVE",
-        "waves": [
-            {"name": "First Toll", "foes": {"husk": 3},
-             "width": 1550, "height": 1050},
-            {"name": "Dead Metal", "foes": {"husk": 2, "deadweight": 1},
-             "width": 1650, "height": 1100},
-            {"name": "Glass Air", "foes": {"glasswing": 2, "husk": 1},
-             "width": 1850, "height": 1250},
-            {"name": "THE GREAT BELL", "foes": {"greatbell": 1, "husk": 2},
-             "phrase": [1, 2, 1], "width": 1800, "height": 1220, "boss": True},
-        ],
-    },
-    {
-        "name": "THE CRYPT",
-        "waves": [
-            {"name": "The Pair", "foes": {"twin": 1, "husk": 2},
-             "width": 1850, "height": 1250},
-            {"name": "Weight and Wing", "foes": {"glasswing": 2, "deadweight": 1},
-             "width": 1850, "height": 1250},
-            {"name": "The Overtone", "foes": {"overtone": 1, "husk": 2},
-             "width": 1800, "height": 1220},
-            {"name": "THE SECOND BELL", "foes": {"greatbell": 1, "glasswing": 2},
-             "phrase": [2, 3, 1, 2], "width": 1900, "height": 1280, "boss": True},
-        ],
-    },
-    {
-        "name": "THE TOWER",
-        "waves": [
-            {"name": "Full Peal", "foes": {"husk": 3, "glasswing": 2, "deadweight": 1},
-             "width": 1850, "height": 1250},
-            {"name": "Twin Overtone", "foes": {"twin": 1, "overtone": 1},
-             "width": 1850, "height": 1250},
-            {"name": "Dead Choir", "foes": {"deadweight": 2, "twin": 1, "glasswing": 2},
-             "width": 1850, "height": 1250},
-            {"name": "THE LAST BELL", "foes": {"greatbell": 1, "overtone": 1, "husk": 2},
-             "phrase": [3, 1, 2, 3], "width": 1950, "height": 1320, "boss": True},
-        ],
-    },
+# Each wave introduces at most one new thing and then stops.
+WAVES = [
+    {"name": "FIRST TOLL", "foes": {"husk": 2}},
+    {"name": "DEAD METAL", "foes": {"husk": 2, "deadweight": 1}},
+    {"name": "GLASS AIR", "foes": {"glasswing": 2, "husk": 1}},
+    {"name": "THE PAIR", "foes": {"twin": 1, "husk": 2}},
+    {"name": "WEIGHT AND WING", "foes": {"glasswing": 3, "deadweight": 1}},
+    {"name": "THE OVERTONE", "foes": {"overtone": 1, "husk": 2}},
+    {"name": "THE GREAT BELL", "foes": {"greatbell": 1, "husk": 2},
+     "phrase": [1, 2, 1]},
+    {"name": "FULL PEAL", "foes": {"husk": 3, "glasswing": 2}},
+    {"name": "TWIN OVERTONE", "foes": {"twin": 1, "overtone": 1, "glasswing": 1}},
+    {"name": "DEAD CHOIR", "foes": {"deadweight": 1, "twin": 1, "glasswing": 2}},
+    {"name": "THE LAST BELL", "foes": {"greatbell": 1, "overtone": 1, "glasswing": 2},
+     "phrase": [3, 1, 2, 3]},
 ]
 
-# The notes a wave will actually ask for. The anvil shows this, which is the
-# whole reason drawing stopped being a guess: the Forge now has a stated
-# target, so shaping a bell is hill-climbing toward a number instead of
-# scribbling and hoping.
+# Deliberately not much bigger than the viewport. There is no aiming in this
+# game, so what the player is choosing is *where to stand* - and a room they
+# cannot see is a room they cannot choose a place in. At 1750x1180 against a
+# 1280x800 window, foes spent most of the fight off the edge of the screen
+# and the whole positioning layer became guesswork.
+ARENA_W, ARENA_H = 1520, 980
+
+# The notes a wave will actually ask for. The Foundry shows this, which is
+# the whole reason drawing stopped being a guess: the tuner has a target, so
+# shaping a bell is hill-climbing toward a number rather than scribbling.
 FOE_NOTES = {
     "husk": 1, "glasswing": 3, "deadweight": -1, "twin": 1,
     "overtone": 4, "greatbell": 2,
@@ -88,8 +60,8 @@ FOE_NOTES = {
 
 
 def notes_in(spec) -> list:
-    """Distinct notes the player will have to produce in this room, low
-    first. -1 means 'something in here has no note at all'."""
+    """Distinct notes this room will demand, low first. -1 means something in
+    there has no note at all."""
     out = []
     for kind in spec.get("foes", {}):
         n = FOE_NOTES.get(kind, 1)
@@ -104,135 +76,83 @@ def notes_in(spec) -> list:
     return sorted(out)
 
 
-REWARDS = [
-    ("metal", "A NEW METAL", "Another way for a bell to behave."),
-    ("budget", "+260 METAL", "Bigger bells, on every peg."),
-    ("mend", "MEND", "Back to full."),
-    ("peg", "+1 BELL PEG", "Carry another bell."),
-]
+def spec_for(index: int) -> dict:
+    """Past the end of the list the waves keep coming, with more in them.
+    Endless rather than a finale, because the game is not a run."""
+    if index < len(WAVES):
+        spec = dict(WAVES[index])
+    else:
+        depth = index - len(WAVES) + 1
+        base = dict(WAVES[(index * 7) % len(WAVES)])
+        base["foes"] = {k: v + (1 if depth > 1 and k != "greatbell" else 0)
+                        for k, v in base["foes"].items()}
+        base["name"] = f"PEAL {index + 1}"
+        spec = base
+    spec.setdefault("width", ARENA_W)
+    spec.setdefault("height", ARENA_H)
+    return spec
 
 
-class Run:
-    MAX_PEGS = 3
+class Session:
+    """One sitting. Holds the bells and where you are in the list."""
+
+    PEGS = 3
 
     def __init__(self, codex=None):
         self.bells = starting_bells()
+        while len(self.bells) < self.PEGS:
+            from .starters import blank
+            self.bells.append(blank())
         self.budget = METAL_BUDGET
-        self.pegs = 2
-        self.metals_locked = list(UNLOCK_ORDER)
-        self.act = 0
+        self.pegs = self.PEGS
         self.wave = 0
         self.hp = 100.0
         self.max_hp = 100.0
         self.shatters = 0
-        self.slams = 0
         self.codex = codex or Codex()
-        self.deepest = 0
-
-    # --------------------------------------------------------------- state
-
-    @property
-    def finished(self) -> bool:
-        return self.act >= len(ACTS)
 
     @property
     def spec(self):
-        if self.finished:
-            return None
-        return ACTS[self.act]["waves"][self.wave]
-
-    @property
-    def act_name(self) -> str:
-        return ACTS[self.act]["name"] if not self.finished else "DONE"
+        return spec_for(self.wave)
 
     @property
     def label(self) -> str:
-        if self.finished:
-            return "the tower is quiet"
-        return f"{self.act_name}  {self.wave + 1}/{len(ACTS[self.act]['waves'])}"
+        return f"WAVE {self.wave + 1}"
 
     def target_notes(self) -> list:
-        s = self.spec
-        return notes_in(s) if s else []
+        return notes_in(self.spec)
 
-    def advance(self) -> str:
-        """Returns what happens next: 'anvil', 'reward' or 'done'."""
-        self.deepest = max(self.deepest, self.act * 10 + self.wave + 1)
+    def advance(self):
         self.wave += 1
-        if self.wave >= len(ACTS[self.act]["waves"]):
-            self.wave = 0
-            self.act += 1
-            self.codex.record(self)
-            return "done" if self.finished else "reward"
-        return "anvil"
-
-    # -------------------------------------------------------------- rewards
-
-    def offers(self, rng=None) -> list:
-        """Two choices, never more. Three is a menu; two is a decision."""
-        rng = rng or random.Random(self.act * 104729 + 17)
-        pool = []
-        if self.metals_locked:
-            pool.append("metal")
-        pool.append("budget")
-        if self.hp < self.max_hp * 0.85:
-            pool.append("mend")
-        if self.pegs < self.MAX_PEGS:
-            pool.append("peg")
-        rng.shuffle(pool)
-        chosen = (pool + ["budget", "mend"])[:2]
-        table = {k: (k, a, b) for k, a, b in REWARDS}
-        return [table[k] for k in chosen]
-
-    def take(self, kind) -> str:
-        if kind == "metal" and self.metals_locked:
-            m = self.metals_locked.pop(0)
-            self.codex.metals.add(m.name)
-            return f"{m.name.upper()} - {m.blurb}"
-        if kind == "budget":
-            self.budget += 260.0
-            return f"metal budget is now {int(self.budget)}"
-        if kind == "mend":
-            self.hp = self.max_hp
-            return "mended"
-        if kind == "peg":
-            from .starters import blank
-            self.pegs += 1
-            self.bells.append(blank())
-            return "a third peg - draw something for it"
-        return ""
+        self.codex.record(self)
 
     def unlocked_metals(self) -> list:
-        from .metals import ALL_METALS
-        locked = {m.name for m in self.metals_locked}
-        return [m for m in ALL_METALS if m.name not in locked]
+        return list(ALL_METALS)
 
 
 class Codex:
     """What survives a death. Deliberately thin: the thing that persists in
-    this game is supposed to be the player's understanding, not a stat."""
+    this game is the player's understanding, not a stat."""
 
     def __init__(self):
-        self.metals = set()
         self.best = 0
         self.runs = 0
         self.shatters = 0
-        self.kept = []          # bells saved off a finished run
+        self.bells = []          # bells kept between sittings
 
-    def record(self, run):
-        self.best = max(self.best, run.deepest)
-        self.shatters += run.shatters
+    def record(self, session):
+        self.best = max(self.best, session.wave)
 
-    def end_run(self, run):
+    def end(self, session):
         self.runs += 1
-        self.best = max(self.best, run.deepest)
-        self.shatters += run.shatters
+        self.best = max(self.best, session.wave)
+        self.shatters += session.shatters
+        self.bells = [b.to_dict() for b in session.bells if not b.is_empty][:3]
         self.save()
 
     def to_dict(self):
-        return {"metals": sorted(self.metals), "best": self.best,
-                "runs": self.runs, "shatters": self.shatters,
-                "kept": [b.to_dict() for b in self.kept[:12]]}
+        return {"best": self.best, "runs": self.runs,
+                "shatters": self.shatters, "bells": self.bells}
 
     def save(self):
         try:
@@ -250,14 +170,8 @@ class Codex:
                 data = json.load(fh)
         except (OSError, ValueError):
             return c
-        c.metals = set(data.get("metals", []))
         c.best = data.get("best", 0)
         c.runs = data.get("runs", 0)
         c.shatters = data.get("shatters", 0)
-        from .bell import Bell
-        for d in data.get("kept", []):
-            try:
-                c.kept.append(Bell.from_dict(d))
-            except Exception:
-                pass
+        c.bells = data.get("bells", [])
         return c

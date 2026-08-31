@@ -585,6 +585,55 @@ class Bell:
         elif self.cracked and self.char < CHAR_RECOVER_AT:
             self.cracked = False
 
+    # ------------------------------------------------------------ viewing
+
+    def wave_samples(self, per_edge: int = 56) -> list:
+        """Where the energy actually is, right now, along the metal.
+
+        Returns [(local_point, signed_amplitude), ...] per edge. The
+        simulation stores each edge as two delay lines whose buffers *are*
+        the wave in physical order, so this is not a visualisation of the
+        state - it is the state, mapped onto the polyline the player drew.
+
+        This is the single largest piece of feedback the Foundry was
+        missing. Striking a bell used to move some numbers on a panel; now
+        the pulse visibly races around the ring, meets itself, and stands.
+        A player can see their bell resonate, which is the thing the entire
+        design is about and which was, until now, invisible.
+        """
+        if self.network is None or self.graph is None:
+            return []
+        out = []
+        for i, edge in enumerate(self.graph.edges):
+            net_edge = self.network.edges.get(i)
+            poly = edge.polyline
+            if net_edge is None or len(poly) < 2:
+                continue
+            fwd = net_edge.forward.spatial_profile()
+            bwd = net_edge.backward.spatial_profile()
+            if len(fwd) < 2:
+                continue
+            # Forward runs A->B and backward B->A, so the standing wave at a
+            # point is the sum of the two travelling waves passing through it.
+            total = fwd + bwd[::-1]
+            n = min(per_edge, len(total))
+            pts = []
+            for k in range(n):
+                t = k / max(1, n - 1)
+                idx = int(t * (len(total) - 1))
+                pi = t * (len(poly) - 1)
+                lo = int(pi)
+                hi = min(len(poly) - 1, lo + 1)
+                f = pi - lo
+                p = poly[lo] + (poly[hi] - poly[lo]) * f
+                pts.append((p, float(total[idx])))
+            out.append(pts)
+        return out
+
+    def spectrum(self) -> list:
+        """What it is emitting right now, for the meter."""
+        return list(self._live)
+
     # ----------------------------------------------------------- transport
 
     def clone(self) -> "Bell":

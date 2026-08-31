@@ -31,7 +31,11 @@ from .shapes import ring
 
 CANVAS = 460.0              # the drawable square, centred on the origin
 CANVAS_HALF = CANVAS / 2
-METAL_BUDGET = 700.0        # in cost-weighted pixels
+# Generous, and fixed. It used to grow as a run reward, which meant the
+# first hour was spent unable to draw the thing the tuner was pointing at.
+# A budget is only interesting if it makes you choose between two bells you
+# both want; below that it is just a wall.
+METAL_BUDGET = 1100.0       # in cost-weighted pixels
 
 
 def _stroke(points, metal=BRONZE) -> Stroke:

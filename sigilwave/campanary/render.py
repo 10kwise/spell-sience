@@ -77,26 +77,24 @@ def draw_floor(surf, cam, belfry):
         pygame.draw.line(surf, FLOOR_LINE, (0, y), (w, y))
 
     # The walls are a real part of the fight - things die against them - so
-    # they are drawn as something solid rather than as the edge of the grid.
+    # they get to look like walls. Everything outside the room is filled
+    # solid, because a thin grey rectangle floating over a grid reads as a
+    # stray line rather than as the edge of the place you are standing in.
     tl = cam.world_to_screen(pygame.Vector2(0, 0))
     br = cam.world_to_screen(pygame.Vector2(belfry.width, belfry.height))
-    rect = pygame.Rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y)
-    pygame.draw.rect(surf, (44, 50, 64), rect, 3)
-    pygame.draw.rect(surf, (26, 30, 40), rect.inflate(10, 10), 1)
+    rect = pygame.Rect(int(tl.x), int(tl.y), int(br.x - tl.x), int(br.y - tl.y))
+    outside = (5, 6, 9)
+    if rect.top > 0:
+        pygame.draw.rect(surf, outside, (0, 0, w, rect.top))
+    if rect.bottom < h:
+        pygame.draw.rect(surf, outside, (0, rect.bottom, w, h - rect.bottom))
+    if rect.left > 0:
+        pygame.draw.rect(surf, outside, (0, 0, rect.left, h))
+    if rect.right < w:
+        pygame.draw.rect(surf, outside, (rect.right, 0, w - rect.right, h))
+    pygame.draw.rect(surf, (52, 60, 76), rect, 3)
+    pygame.draw.rect(surf, (22, 26, 34), rect.inflate(-6, -6), 1)
 
-
-def draw_stains(surf, cam, belfry):
-    """Where rings were struck. Fades out. Purely for the sense that the room
-    remembers what you did in it."""
-    for pos, color, life in belfry.floor_notes:
-        p = cam.world_to_screen(pos)
-        r = int(26 + 40 * (1.0 - life))
-        if r < 2:
-            continue
-        pygame.draw.circle(surf, scale(color, 0.10 * life), (int(p.x), int(p.y)), r, 1)
-
-
-# ------------------------------------------------------------------- rings
 
 def draw_ring(glow, cam, ring):
     """An expanding wavefront, cooling as it goes.
@@ -159,58 +157,74 @@ def draw_foe(surf, glow, cam, foe, t):
     col = foe.color
     body = lerp(col, HOT, foe.flash * 0.7)
 
-    if foe.telegraph > 0.02:
-        # A wind-up is the cheapest fair threat there is, so it gets to be
-        # loud: a closing bracket that says exactly when.
-        k = 1.0 - foe.telegraph
-        rr = int(foe.radius + 46 * foe.telegraph)
-        pygame.draw.circle(glow.surf, (*scale((255, 210, 150), 0.8 * foe.telegraph), 255),
-                           (x, y), rr, 3)
-
-    _draw_note_pulse(glow, foe, x, y, t)
+    _draw_clock(surf, glow, foe, x, y)
 
     r = int(foe.radius)
     pygame.draw.circle(surf, scale(body, 0.34), (x, y), r)
     pygame.draw.circle(surf, body, (x, y), r, 3)
     pygame.draw.circle(glow.surf, (*scale(body, 0.30 + 0.6 * foe.flash), 255), (x, y), r, 2)
 
-    # Three states, and they have to be three *looks*, not one look and two
-    # absences. The first cut drew "cannot be cracked right now" the same way
-    # for both cases, so the act boss - which has a note and is merely sealed
-    # until you answer its phrase - rendered as dead metal, which is the one
-    # thing in the game that says "no note will ever work on this".
+    # Three states, three *looks*. "Cannot be cracked right now" and "nothing
+    # will ever ring this" are different statements and have to read
+    # differently, or the boss - which merely has its mouth shut - looks like
+    # dead metal.
     if foe.crackable:
         _draw_cracks(surf, foe, x, y, body)
     elif foe.note < 0:
-        # Dead metal: hatched, colourless, obviously not a thing with a note.
         for i in range(-r, r, 6):
             h = int(math.sqrt(max(0.0, r * r - i * i)))
             pygame.draw.line(surf, scale(body, 0.5), (x + i, y - h), (x + i, y + h), 1)
     else:
         _draw_sealed(surf, glow, foe, x, y, r, t)
 
+    if foe.flying:
+        # It is a projectile now. Say so - the whole force lane depends on
+        # the player noticing that something they shoved is still moving.
+        v = pygame.Vector2(foe.vel)
+        tail = p - v * 0.045
+        pygame.draw.line(glow.surf, (*scale((255, 244, 214), 0.8), 255),
+                         (int(tail.x), int(tail.y)), (x, y), 4)
+        pygame.draw.circle(glow.surf, (*scale((255, 250, 230), 0.9), 255),
+                           (x, y), r + 4, 2)
     if foe.stagger > 0.0:
-        pygame.draw.circle(glow.surf, (*scale(HOT, 0.35), 255), (x, y), r + 5, 1)
+        pygame.draw.circle(glow.surf, (*scale(HOT, 0.4), 255), (x, y), r + 6, 2)
 
 
-def _draw_note_pulse(glow, foe, x, y, t):
-    """A foe's note, as a pulse you can count.
+def _draw_clock(surf, glow, foe, x, y):
+    """A foe's note, and its attack, as one ring closing on its body.
 
-    This is the identify layer, and it costs no UI at all. The ring expands
-    on exactly the period a bell of that note would toll at, so a player who
-    has played a TENOR for two minutes recognises a TENOR-tuned thing across
-    the room by its *tempo*, not by reading a colour off a legend. Colour and
-    hum say the same thing at the same time; any one of the three is enough.
+    The identify cue and the threat cue used to be two separate ideas, and
+    the threat cue barely existed - foes acted off internal timers with a
+    short flash, so there was nothing to read and no reason to move.
+
+    Now the pulse *closes*, on exactly the tempo a bell of that note tolls
+    at, and the foe attacks the frame it lands. The thing telling you which
+    bell to bring is the same thing telling you when to leave, and both are
+    one shape: a TENOR enemy swings on a slow 0.8s beat, a CHIME one comes at
+    you twice as often, and a player who has played either bell already knows
+    that cadence in their hands.
     """
-    if not foe.crackable:
+    period = max(0.05, foe.period)
+    phase = min(1.0, max(0.0, foe.clock / period))
+    col = foe.color if foe.crackable else (150, 150, 156)
+
+    rr = int(foe.radius + 8 + (1.0 - phase) * 52)
+    pygame.draw.circle(glow.surf, (*scale(col, 0.16 + 0.22 * phase), 255), (x, y), rr, 1)
+
+    w = foe.wind
+    if w <= 0.0:
         return
-    period = NOTE_PERIOD[max(0, min(N_NOTES - 1, foe.note))]
-    phase = ((t + foe.hum_t) % period) / period
-    rr = int(foe.radius + 4 + phase * 40)
-    a = (1.0 - phase) ** 1.6
-    if a <= 0.02:
-        return
-    pygame.draw.circle(glow.surf, (*scale(foe.color, 0.72 * a), 255), (x, y), rr, 2)
+    # The wind-up: a bright bracket collapsing onto the body. When it
+    # touches, the thing moves.
+    warn = (255, 196, 120) if w < 0.85 else (255, 245, 220)
+    rr = int(foe.radius + 6 + (1.0 - w) * 62)
+    pygame.draw.circle(glow.surf, (*scale(warn, 0.55 + 0.45 * w), 255), (x, y), rr,
+                       2 + int(2 * w))
+    if foe.winding:
+        d = pygame.Vector2(foe.aim)
+        tip = pygame.Vector2(x, y) + d * (foe.radius + 26 + 34 * w)
+        pygame.draw.line(glow.surf, (*scale(warn, 0.5 + 0.5 * w), 255),
+                         (x, y), (int(tip.x), int(tip.y)), 2)
 
 
 def _draw_sealed(surf, glow, foe, x, y, r, t):
@@ -253,6 +267,41 @@ def _draw_cracks(surf, foe, x, y, body):
             [(x + inner.x, y + inner.y), (x + mid.x, y + mid.y), (x + outer.x, y + outer.y)],
             1 + int(frac * 2),
         )
+
+
+def draw_hazards(surf, glow, cam, belfry):
+    """Melee arcs, standing waves and shockwaves - everything a foe does that
+    is not a ring. Each is drawn as the exact region that hurts, so "was I in
+    it?" is never a question about hitboxes."""
+    for b in belfry.beams:
+        if b["kind"] == "beam":
+            a = cam.world_to_screen(b["a"])
+            c = cam.world_to_screen(b["b"])
+            k = max(0.0, min(1.0, b["t"] / 0.34))
+            pygame.draw.line(glow.surf, (*scale((236, 198, 255), 0.9 * k), 255),
+                             (int(a.x), int(a.y)), (int(c.x), int(c.y)),
+                             max(2, int(b["reach"] * k)))
+            pygame.draw.line(surf, scale((255, 245, 255), k),
+                             (int(a.x), int(a.y)), (int(c.x), int(c.y)), 2)
+        else:
+            foe = b["foe"]
+            if foe.dead:
+                continue
+            q = cam.world_to_screen(foe.pos)
+            k = max(0.0, min(1.0, b["t"] * 3.0))
+            pygame.draw.circle(glow.surf, (*scale((255, 190, 150), 0.55 * k), 255),
+                               (int(q.x), int(q.y)), int(b["reach"]), 2)
+
+    for w in belfry.waves:
+        q = cam.world_to_screen(w["pos"])
+        k = 1.0 - w["r"] / max(1.0, w["max"])
+        rr = int(w["r"])
+        if rr < 2:
+            continue
+        pygame.draw.circle(glow.surf, (*scale(w["color"], 0.9 * k), 255),
+                           (int(q.x), int(q.y)), rr, max(2, int(10 * k)))
+        pygame.draw.circle(surf, scale(w["color"], 0.55 * k),
+                           (int(q.x), int(q.y)), rr, 2)
 
 
 def draw_bond(glow, cam, a, b):
@@ -446,6 +495,39 @@ def _draw_bell(surf, glow, cam, bell, p, player):
 
 # ------------------------------------------------------------------- marks
 
+def draw_offscreen(surf, glow, cam, belfry):
+    """Arrows at the screen edge for anything you cannot see.
+
+    A game with no aiming asks the player to choose where to stand, and that
+    is not a choice you can make about a room you cannot see. Each marker
+    carries the foe's note colour and brightens with its attack clock, so an
+    off-screen thing winding up to lunge announces itself in the direction it
+    is coming from.
+    """
+    w, h = surf.get_size()
+    m = 26
+    for f in belfry.foes:
+        p = cam.world_to_screen(f.pos)
+        if -m <= p.x <= w + m and -m <= p.y <= h + m:
+            continue
+        d = pygame.Vector2(p.x - w / 2, p.y - h / 2)
+        if d.length_squared() < 1e-6:
+            continue
+        d = d.normalize()
+        edge = pygame.Vector2(w / 2, h / 2) + d * min(
+            (w / 2 - m) / max(1e-3, abs(d.x)), (h / 2 - m) / max(1e-3, abs(d.y)))
+        col = f.color
+        a = 0.45 + 0.55 * f.wind
+        tip = edge + d * 10
+        left = edge + pygame.Vector2(-d.y, d.x) * 8 - d * 6
+        right = edge + pygame.Vector2(d.y, -d.x) * 8 - d * 6
+        pygame.draw.polygon(glow.surf, (*scale(col, a), 255),
+                            [(tip.x, tip.y), (left.x, left.y), (right.x, right.y)])
+        if f.wind > 0.5:
+            pygame.draw.circle(glow.surf, (*scale((255, 210, 150), f.wind), 255),
+                               (int(edge.x), int(edge.y)), 13, 2)
+
+
 def draw_marks(surf, glow, cam, belfry, font=None):
     for m in belfry.marks:
         p = cam.world_to_screen(m["pos"])
@@ -492,15 +574,15 @@ def draw_marks(surf, glow, cam, belfry, font=None):
         elif k == "dash":
             r = int(4 + 34 * t)
             pygame.draw.circle(glow.surf, (*scale(col, a * 0.5), 255), (x, y), r, 1)
+        elif k == "bonded":
+            # A note the bond ate. It has to look like nothing happening,
+            # because nothing did.
+            r = int(10 + 40 * t)
+            pygame.draw.circle(glow.surf, (*scale(col, a * 0.7), 255), (x, y), r, 2)
+        elif k == "feed":
+            r = int(20 + 130 * t)
+            pygame.draw.circle(glow.surf, (*scale(col, a), 255), (x, y), r,
+                               max(1, int(6 * a)))
         elif k == "open":
             r = int(30 + 250 * t)
             pygame.draw.circle(glow.surf, (*scale(col, a), 255), (x, y), r, max(1, int(9 * a)))
-
-
-def draw_shards(surf, cam, belfry):
-    for pos, vel, life, col in belfry.shards:
-        p = cam.world_to_screen(pos)
-        a = min(1.0, life * 1.6)
-        tail = p - vel * 0.018
-        pygame.draw.line(surf, scale(col, a), (int(tail.x), int(tail.y)),
-                         (int(p.x), int(p.y)), 2)

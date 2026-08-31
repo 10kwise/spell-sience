@@ -16,12 +16,13 @@ from sigilwave.ink import Stroke
 
 from . import audio, shapes
 from .app import App
+from .run import Session
 from .arena import Belfry, Player
 from .bell import Bell
 from .foes import GreatBell
 from .metals import BRONZE
 from .playtest import DT, Founder, bell_for
-from .run import ACTS, Run
+from .run import spec_for
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "debug_output")
@@ -56,9 +57,10 @@ def main():
 
     app.mode = "TITLE"
     app.time = 1.4
+    app.codex.runs = 0
     _save(app, "1_title")
 
-    app.run = Run()
+    app.session = Session()
     app.enter_foundry(first=True)
     f = app.foundry
     f.bell.strike()
@@ -69,13 +71,14 @@ def main():
     # Mid-draw, showing the closure assist and the ladder on the canvas.
     rect = f.canvas_rect(app.screen)
     import math
-    f.slot = 1
-    f.begin((rect.centerx + 60, rect.centery), rect)
-    for i in range(48):
-        a = math.tau * i / 50
-        f.extend((rect.centerx + 60 * math.cos(a), rect.centery + 60 * math.sin(a)), rect)
-    _save(app, "3_foundry_drawing")
-    f.drawing = None
+    # Mid-gesture with the RING tool, showing the snap and the live note.
+    f.slot = 2
+    f.tool = 0
+    f._begin(f.to_canvas(rect.center, rect))
+    f._drag(f.to_canvas((rect.centerx + 96, rect.centery - 30), rect))
+    f.hover = -1
+    _save(app, "3_foundry_ring_tool")
+    f.pending = None
     f.slot = 0
 
     def room(spec, name, seconds, bells=None, hold=False):
@@ -86,21 +89,12 @@ def main():
         _play(app, seconds, hold=hold)
         _save(app, name)
 
-    room(ACTS[0]["waves"][0], "4_first_toll", 2.4)
-    room(ACTS[0]["waves"][1], "5_deadweight", 4.0)
-    room(ACTS[1]["waves"][0], "6_twins", 3.0)
-    room(ACTS[1]["waves"][2], "7_overtone_swell", 6.0)
-    room(ACTS[0]["waves"][3], "8_great_bell", 8.0,
+    room(spec_for(0), "4_first_toll", 3.2)
+    room(spec_for(1), "5_deadweight", 5.0)
+    room(spec_for(3), "6_twins", 4.0)
+    room(spec_for(5), "7_overtone_swell", 7.0)
+    room(spec_for(6), "8_great_bell", 9.0,
          bells=[bell_for(1), bell_for(2), bell_for(3)])
-
-    app.run.act = 1
-    app.offers = app.run.offers()
-    app.mode = "REWARD"
-    _save(app, "9_reward")
-
-    app.enter_foundry(anvil=True)
-    app.foundry.left = 8.4
-    _save(app, "10_anvil")
     print("done")
 
 

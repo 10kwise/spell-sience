@@ -100,7 +100,11 @@ def main():
 
     print("\n[4] strikes to shatter (crack scale check)")
     from .rings import CRACK_SCALE
-    caps = {"Husk": (1, 1.0), "Glasswing": (3, 0.85), "Overtone": (4, 2.6)}
+    # Read straight off the classes, so this cannot quietly go stale when a
+    # cap is retuned - which it had, reporting an Overtone at 2.6 long after
+    # it was 2.0.
+    from .foes import Glasswing, Husk, Overtone
+    caps = {f.label: (f.note, f.cap) for f in (Husk, Glasswing, Overtone)}
     for label, (tn, cap) in caps.items():
         line = f"  {label:11s} (cap {cap}):  "
         for n in range(4):

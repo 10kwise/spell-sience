@@ -167,41 +167,89 @@ player who has only noticed one of colour / tempo / pitch.
 
 ## 8. The roster
 
-Each foe exists to demand one verb the player would not otherwise use.
+Each foe exists to punish one specific habit. The first cut of the roster was
+polite - everything telegraphed, everything dodgeable, and nothing at all
+happened if you ignored all of it, because contact did 13 damage against 100
+health on a 0.8s cooldown. They were busywork with a colour.
 
-| | note | demands |
-|---|---|---|
-| **Husk** | TENOR | reading a telegraph; the first shatter |
-| **Glasswing** | CHIME | letting it come to you — a high note has no reach |
-| **Deadweight** | *none* | shoving. Nothing will ever ring it |
-| **Twin** ×2 | detuned pair | force *then* resonance — the bond eats every note until you break it apart |
-| **Overtone** | SPARROW | the swell. It sits an octave above any drawable ring, and it drags you in |
-| **Great Bell** | TREBLE | answering a phrase in its own note; matched fronts annihilate |
+**The pulse is now the attack clock.** Every foe already showed a ring on its
+own note's tempo as an identify cue; that ring now *closes* and the foe acts
+the frame it lands. So the thing telling you which bell to bring is the same
+thing telling you when to move, and reading a room is one act instead of two.
+Cadence is separated from the clock by `attack_every`, because a
+SPARROW-tuned enemy ticks five times a second and a room-covering shockwave
+five times a second is weather, not a fight.
 
-The Great Bell is TREBLE rather than BOURDON on purpose: a BOURDON is a
-640px ring and costs an entire starting budget, so tuning to it would make
-the act-one boss a wall. TREBLE is cheap, is *not* what the player starts
-holding, and is named on the anvil beforehand — so the gate is "cast one new
-bell", which is what the act was teaching.
+| | note | clock | punishes |
+|---|---|---|---|
+| **Husk** | TENOR | 0.8s | **standing still.** Commits to a lunge it cannot steer out of; the lunge is a quarter of your health |
+| **Glasswing** | CHIME | 0.4s, dives on every 2nd | **keeping your distance.** Its note reaches 155px, so it cannot be answered from safety by anyone |
+| **Deadweight** | *none* | 1.6s | **forgetting where it is.** Cannot be shattered at all; stomps a shockwave that owns the ground it stands on |
+| **Twin** ×2 | detuned pair | 0.8s, beams on every 2nd | **standing between things.** Bonded, they eat every note; they actively straddle you with a live standing wave. Shove them apart and the bond breaks *for good* |
+| **Overtone** | SPARROW | 0.4s, tolls on every 4th | **greed.** Drags you in; crack a bell inside its reach and it feeds - heals and quickens |
+| **Great Bell** | TREBLE | 3.2s | **carrying one bell.** Tolls a phrase; matched fronts cancel; answering it all opens the only crack window |
 
-## 9. The Foundry has a target
+The counterweight is the health economy: three or four connected attacks
+kill, and a resonant shatter heals 7. That pairing is the whole thing - the
+game pays for the play it wants to teach rather than punishing the play it
+wants to discourage.
 
-Two changes turn the drawing screen from homework into craft:
+Two numbers in that system were simply broken and only measurement found
+them. A point-blank TENOR ring threw a Deadweight at **543px/s against a
+560px/s slam threshold**, so the only kill the unshatterable enemy has could
+not be triggered by the bell the player starts holding - not hard, off by
+three percent, and the symptom was a foe that never died. And the Twins'
+bond was recomputed from live distance every frame, so a pair shoved apart
+snapped back together a third of a second later and "break them apart" named
+something that could not be done.
 
-1. **The peal of the room ahead is on the screen** — the actual notes of the
-   actual things down there. Drawing is closing a gap.
-2. **The readout is a tuner** — needle, note name, cents flat or sharp. No
-   prose, no efficiency percentage. Everyone can read a guitar tuner, and
-   nudge-look-nudge *is* the hill-climb that teaches that circumference is
-   pitch.
+## 9. The Foundry: shapes, a target, and the wave in the metal
 
-Plus **the anvil**: the same screen on a twelve-second clock between waves.
-Authoring latency drops from minutes to seconds.
+The first version of this screen asked you to draw a circle freehand with a
+mouse and then told you, accurately, that you had failed. That is a dexterity
+test standing between the player and the system, and the system is the point.
 
-The note ladder is printed on the canvas at actual size, so "I want that
-note" and "draw this big" are one instruction. Closure is assisted to 30px
-(the parser's own snap is 8px, a fine tolerance for a machine and a cruel
-one for a mouse) with a live marker saying *let go here and this is a bell*.
+**Drawing is made of shapes now, and the shapes snap to the note ladder.**
+RING is press-centre-drag-out with the radius sticking to the notes already
+printed on the canvas. ARC is drag out then sweep, where the direction you
+sweep *is* the winding and going past a full turn closes it into a bell -
+chirality taught by the gesture that produces it. LINE snaps to 15° and to
+existing stroke ends, because a horn that does not quite touch the ring is a
+horn that does nothing and finding that out used to cost a trip downstairs.
+
+**And nothing is final.** Hovering a stroke highlights it; the wheel retunes
+a ring in place while the tuner needle moves under your hand. That is the
+nudge-look-nudge loop the whole design wants, and it was previously
+impossible - you could only delete and redraw.
+
+Two things it has that the old screen did not:
+
+1. **A target.** The peal of the room ahead - the actual notes of the actual
+   things down there - is on the screen. Drawing is closing a gap. That is
+   also the real fix for the old build's brute-force problem, because "you
+   can draw anything and it works" was never a balance failure; it was the
+   absence of anything to aim at.
+2. **The wave, drawn in the metal.** `Bell.wave_samples()` maps the
+   simulation's own delay-line buffers onto the polyline the player drew, so
+   striking a bell makes the pulse visibly race round the ring, meet itself
+   and stand. That is not an illustration of resonance. It is the buffer.
+
+## 9a. Effects
+
+The old build had a shake, a hitstop and seven kinds of expanding circle.
+Circles are good at saying *where* and terrible at saying *what*: a
+wrong-note thud and a correct-note crack were two circles of different
+colours, so the most important teaching signal in the game arrived as a hue
+change on a shape you had seen a hundred times.
+
+`fx.py` is a flat particle list whose job is to make three things feel
+physically different - a matched hit throws bright shards of the target's own
+colour, a wrong note puffs dull grey and dies, a shatter empties the thing
+into the room. Damage feedback is an **edge vignette** rather than a
+full-screen wash, because a tint covering everything arrives at exactly the
+moment the player most needs to see the arena; and washes are combined into
+one capped blit, since blitting each separately meant N good moments tinted
+the screen N times over and the cost of a kill was not seeing the next one.
 
 ## 10. What the simulation gave, and what had to be corrected
 
@@ -266,28 +314,31 @@ three seeds each. Each bot knows exactly one more thing than the last.
    Twin Overtone             0/3      0/3      3/3      3/3
    Dead Choir                0/3      1/3      3/3      3/3
    THE LAST BELL             0/3      0/3      0/3      3/3
-   TOTAL                     3/36     12/36     27/36     36/36
+   TOTAL                     2/33     13/33     24/33     31/33
 ```
 
-- **masher** ignores note, beat and range: 3/36. It clears the tutorial,
+- **masher** ignores note, beat and range: 2/33. It clears the tutorial,
   which is the point of a tutorial.
-- **ringer** adds the beat: 12/36.
-- **tuner** adds matching the note and closing to its reach: 27/36. It
-  cannot beat a boss, because it never casts the bell the boss demands.
-- **founder** adds casting for the room and swelling for the octave: 36/36.
+- **ringer** adds the beat: 13/33.
+- **tuner** adds matching the note and closing to its reach: 24/33. It
+  cannot beat the Great Bell, because it never casts the bell it demands.
+- **founder** adds casting for the room and swelling for the octave: 31/33.
+  The two it loses are the peak of the curve, and it dies to them rather
+  than running out of time.
 
 Monotone at every step. If the first and last columns ever converge, the
 system is decoration and the harness says so out loud.
 
-Frame cost in the worst room: **0.08 ms/step**, 1% of a 120Hz budget.
+Frame cost in the worst room: **0.12 ms/step**, 1.4% of a 120Hz budget.
 
 ## 13. Complexity budget
 
 | | WAVEWRIGHT | CAMPANARY |
 |---|---|---|
 | notes / bands | 6 | 5 (4 drawable) |
+| run structure | 3 acts, rewards, an anvil clock | a list of waves |
 | materials | 6 inks | 3 metals |
-| carried instruments | 4 foci | 2 bells (3 with a reward) |
+| carried instruments | 4 foci | 3 bells, from the first second |
 | combat verbs | tap, hold, relay, quench, dash, aim | toll, swell, dash, swap |
 | live systems | ~15 | 4 |
 | anti-brute-force systems | 3 (glut, surge, reflection) | 0 |
@@ -319,14 +370,39 @@ for free. Silver measured 4.8× louder than Bronze on the first strike *and*
 5.7× louder settled: not a tradeoff, just the best metal, and the exact
 opposite of the one thing it is supposed to be.
 
-## 15. What is still open
+## 15. Structure, and what it is not
 
-- **The Overtone takes ~27s solo** in the harness. That is a long elite; its
-  cap or the swell's payout could come down.
-- **Twins never appear more than one pair at a time**, so their lesson is
-  taught once and never tested under pressure.
-- **Silver is still the best swell metal** (it releases hardest), which is
-  arguably right for "everything at once" but means the rhythm/burst choice
-  only really bites when tapping.
-- **No run-to-run persistence of bells.** The codex has a `kept` list and
-  nothing writes to it.
+This was a roguelite: three acts, a reward screen, metals as loot, an anvil
+on a twelve-second clock. That structure is not what the game is for and it
+was absorbing effort that belongs in the two things that carry it - shaping a
+bell and fighting with it.
+
+It is now a list. Everything is unlocked from the first second, you carry
+three bells, the budget never changes, the Foundry is open between every wave
+with no timer, and past the end of the list the waves keep coming with more
+in them. The only rule the ordering obeys is dependency: a wave may not
+introduce a foe whose answer has not already been available. That is not
+level design, it is just not teaching things in the wrong order.
+
+The arena also shrank, from 1750x1180 to 1520x980. There is no aiming in this
+game, so what the player chooses is *where to stand* - and a room they cannot
+see is a room they cannot choose a place in. Anything still off the edge gets
+an arrow at the screen border in its own colour, brightening as its attack
+lands.
+
+## 16. What is still open
+
+- **The playtest bot is a floor, not a ceiling.** It dashes reactively off a
+  single rule and never plans a slam, so its 31/33 understates what a person
+  can do and its two losses (TWIN OVERTONE, THE LAST BELL) are the two waves
+  where several demands conflict at once. That conflict is the point; the
+  numbers around it are the least trustworthy in the harness.
+- **Silver is still the best swell metal** - it releases hardest, which is
+  arguably right for "everything at once", but it means the rhythm/burst
+  choice only really bites when tapping.
+- **The Great Bell is the only foe that does not fit the punish-a-habit
+  frame.** It punishes carrying one bell, which is a loadout decision rather
+  than a moment-to-moment one, so it reads as a puzzle in the middle of a
+  brawl.
+- **Nothing carries between sittings.** The codex saves the bells you were
+  holding and nothing reads them back.

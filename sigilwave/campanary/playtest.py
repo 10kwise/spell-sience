@@ -24,7 +24,7 @@ from .arena import Belfry, Player
 from .bell import Bell
 from .foes import GreatBell, Overtone, Twin
 from .metals import BRONZE
-from .run import ACTS, Run
+from .run import WAVES, spec_for
 from .starters import starting_bells
 
 DT = 1 / 120.0
@@ -73,18 +73,41 @@ class Bot:
             want = bell.reach * 0.55 if self.knows_range else 300.0
             if bell.is_empty or not bell.has_loop:
                 want = 220.0
-            if d > want and d > 1e-6:
+
+            # A bonded pair is not killed, it is taken apart - so stand
+            # between them, where one ring pushes both outward along their
+            # own line. Without this the bot simply tolled at something that
+            # cannot be cracked until the clock ran out, which measures the
+            # bot's blind spot rather than the game's difficulty.
+            hold = None
+            if self.knows_note and isinstance(foe, Twin) and foe.bonded:
+                hold = (foe.pos + foe.bond.pos) * 0.5
+            if hold is not None:
+                gap = hold - p.pos
+                if gap.length() > 40.0:
+                    move = gap.normalize()
+                else:
+                    move = pygame.Vector2(0, 0)
+            elif d > want and d > 1e-6:
                 move = to / d
             elif d < want * 0.45 and d > 1e-6:
                 move = -to / d
 
-            # Dodge a committed wind-up. Everything in the game telegraphs,
-            # so a bot that reads telegraphs is modelling a competent player
-            # rather than an omniscient one.
+            # Dodge a committed wind-up. Everything in the game telegraphs
+            # on its own note's clock, so a bot that reads the closing ring
+            # is modelling a competent player rather than an omniscient one.
             for f in belfry.foes:
-                if f.telegraph > 0.5 and (f.pos - p.pos).length() < 340.0:
+                if f.wind > 0.55 and (f.pos - p.pos).length() < 380.0:
                     dash = True
                     away = p.pos - f.pos
+                    if away.length_squared() > 1e-9:
+                        move = away.normalize()
+                    break
+            for w in belfry.waves:
+                gap = (p.pos - w["pos"]).length() - w["r"]
+                if 0.0 < gap < 120.0:
+                    dash = True
+                    away = p.pos - w["pos"]
                     if away.length_squared() > 1e-9:
                         move = away.normalize()
                     break
@@ -99,7 +122,8 @@ class Bot:
                     hold = False
                 if not hold:
                     self.hold_t = -0.5
-            elif self._in_range(p, foe):
+            elif self._in_range(p, foe) or (
+                    isinstance(foe, Twin) and foe.bonded):
                 self.hold_t = 0.0
                 if self.knows_beat:
                     strike = p.bell is not None and p.bell.on_beat()
@@ -197,8 +221,8 @@ class Founder(Tuner):
         return bells
 
 
-def play(bot, spec, seed, limit=75.0):
-    limit = 120.0 if spec.get("boss") else limit
+def play(bot, spec, seed, limit=95.0):
+    limit = 120.0 if 'greatbell' in spec.get('foes', {}) else limit
     bells = bot.loadout(spec)
     player = Player(pygame.Vector2(0, 0), bells)
     b = Belfry(player, spec, seed=seed)
@@ -215,6 +239,7 @@ def main():
     audio.set_enabled(False)
     bots = [Masher(), Ringer(), Tuner(), Founder()]
     seeds = (3, 41, 907)
+    specs = [spec_for(i) for i in range(len(WAVES))]
 
     print("=" * 76)
     print("CAMPANARY playtest")
@@ -223,8 +248,7 @@ def main():
     table = {}
     for bot in bots:
         print(f"\n[{bot.name}]")
-        for act in ACTS:
-            for spec in act["waves"]:
+        for spec in specs:
                 wins, times, hps = 0, [], []
                 for s in seeds:
                     ok, t, hp = play(bot, spec, s)
@@ -261,7 +285,7 @@ def main():
     print("\n" + "=" * 76)
     print("frame cost, worst room")
     import time as _time
-    spec = ACTS[2]["waves"][2]
+    spec = spec_for(len(WAVES) - 2)
     bells = Founder().loadout(spec)
     player = Player(pygame.Vector2(0, 0), bells)
     b = Belfry(player, spec, seed=5)
