@@ -266,12 +266,12 @@ three seeds each. Each bot knows exactly one more thing than the last.
    Twin Overtone             0/3      0/3      3/3      3/3
    Dead Choir                0/3      1/3      3/3      3/3
    THE LAST BELL             0/3      0/3      0/3      3/3
-   TOTAL                     2/36     14/36     27/36     36/36
+   TOTAL                     3/36     12/36     27/36     36/36
 ```
 
-- **masher** ignores note, beat and range: 2/36. It clears the tutorial,
+- **masher** ignores note, beat and range: 3/36. It clears the tutorial,
   which is the point of a tutorial.
-- **ringer** adds the beat: 14/36.
+- **ringer** adds the beat: 12/36.
 - **tuner** adds matching the note and closing to its reach: 27/36. It
   cannot beat a boss, because it never casts the bell the boss demands.
 - **founder** adds casting for the room and swelling for the octave: 36/36.
@@ -299,15 +299,34 @@ Cut from the surface, not from the simulation: relays, drawn barriers, the
 aura, the fire/wind/phase field grid, glut, surges, efficiency percentages,
 impedance prose.
 
-## 14. What is still open
+## 14. The metals, measured
 
-- **Metal balance.** Silver measures far stronger than its blurb claims —
-  it sustains best when it should be the one metal that cannot. Its
-  `broadband_gain` wants to come down until "everything at once, then
-  nothing" is true.
+| | first strike | settled | still ringing after 1.2s | octave in |
+|---|---|---|---|---|
+| **Bronze** | 4.0 | 32.7 | 163% | 1.11s |
+| **Silver** | 8.5 | 30.0 | 57% | 1.37s |
+| **Blackglass** | 3.1 | 9.8 | 13% | 0.91s |
+
+Bronze rings on after you stop. Silver opens twice as loud and is empty by
+the next bar. Blackglass is poor at everything except reaching the octave,
+which it does soonest, sitting at 0.75 char while it does it.
+
+That table took a units fix to become true. The network measures stored
+energy as `sum(buffer²)·admittance`, so reading the radiated amount straight
+off it counted admittance twice — once in the energy and once in the
+radiating fraction — and handed every low-impedance metal a flat multiplier
+for free. Silver measured 4.8× louder than Bronze on the first strike *and*
+5.7× louder settled: not a tradeoff, just the best metal, and the exact
+opposite of the one thing it is supposed to be.
+
+## 15. What is still open
+
 - **The Overtone takes ~27s solo** in the harness. That is a long elite; its
   cap or the swell's payout could come down.
 - **Twins never appear more than one pair at a time**, so their lesson is
   taught once and never tested under pressure.
+- **Silver is still the best swell metal** (it releases hardest), which is
+  arguably right for "everything at once" but means the rhythm/burst choice
+  only really bites when tapping.
 - **No run-to-run persistence of bells.** The codex has a `kept` list and
   nothing writes to it.

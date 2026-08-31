@@ -89,7 +89,7 @@ SWELL_CLIMB_GAIN = 1.35         # the second mode needs more push to ring
 # Energy scales with how much metal you drew, so a big bell would char for
 # existing; saturation depth is size-independent and is literally the metal
 # being worked past what it can take. It also makes a metal's harmonic
-# talent and its fragility the same number - Blackglass folds at 0.7 where
+# talent and its fragility the same number - Blackglass folds at 1.8 where
 # Bronze folds at 3.0, so it buys the octave and burns itself doing it.
 CHAR_ONSET = 0.55
 CHAR_RATE = 0.62
@@ -117,6 +117,22 @@ CHAR_RECOVER_AT = 0.55
 # both facts are the one number that was already in the material.
 BODY_RADIATION = 0.0042
 BODY_RAD_REFERENCE = 0.45
+# Bronze's impedance, and the reason this constant has to exist.
+#
+# The network measures stored energy as sum(buffer^2) * admittance, so a
+# low-impedance metal reports more energy for the *same wave*. Reading the
+# radiated amount straight off that number therefore counted the admittance
+# twice - once in the stored energy and once in the radiating fraction - and
+# handed every low-impedance metal a flat multiplier on its output for free.
+#
+# Measured, Silver came out 4.8x louder than Bronze on the first strike and
+# 5.7x louder settled, which is not a tradeoff, it is simply the best metal;
+# and it directly contradicted the one thing Silver is supposed to be, which
+# is a bell that gives you everything at once and then has nothing left.
+# Normalising the output against impedance leaves the *fraction* radiated as
+# the material's real identity: Silver dumps twice as fast as Bronze, which
+# makes it loud now and empty later, exactly as advertised.
+IMPEDANCE_REFERENCE = 50.0
 
 # Display scales, not caps.
 CHARGE_REFERENCE = 6.0
@@ -146,6 +162,7 @@ class Bell:
         self.extent = 1.0
         self.bias = pygame.Vector2(0, 0)   # where the shape points its output
         self.body_rad = BODY_RADIATION
+        self.out_gain = 1.0
 
         self._accum = 0.0
         self._burst = []
@@ -177,11 +194,16 @@ class Bell:
         self._measure_body_radiation()
 
     def _measure_body_radiation(self) -> None:
-        """How freely this bell's metal lets go of what it is holding."""
+        """How freely this bell's metal lets go of what it is holding, and
+        the unit correction that stops impedance being a free multiplier."""
         fracs = [getattr(s.ink_type, "rad_admittance_fraction", BODY_RAD_REFERENCE)
                  for s in self.strokes]
+        zs = [getattr(s.ink_type, "impedance", IMPEDANCE_REFERENCE)
+              for s in self.strokes]
         mean = sum(fracs) / len(fracs) if fracs else BODY_RAD_REFERENCE
+        z = sum(zs) / len(zs) if zs else IMPEDANCE_REFERENCE
         self.body_rad = BODY_RADIATION * (mean / BODY_RAD_REFERENCE)
+        self.out_gain = z / IMPEDANCE_REFERENCE
 
     def _add_couplers(self) -> None:
         """Per-metal reach with a soft edge. The cliff in the raw sim makes
@@ -545,7 +567,7 @@ class Bell:
                     edge.backward.buffer *= factor
                 shape_total = sum(self._live)
                 if shape_total > 1e-12:
-                    gain = leaving * OUTPUT_SCALE / shape_total
+                    gain = leaving * OUTPUT_SCALE * self.out_gain / shape_total
                     for i in range(N_NOTES):
                         self._pool[i] += self._live[i] * gain
 

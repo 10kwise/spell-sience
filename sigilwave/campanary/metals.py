@@ -36,7 +36,14 @@ BRONZE = InkType(
 SILVER = InkType(
     name="Silver",
     impedance=22.0,
-    broadband_gain_per_sample=0.9993,
+    # Lossy, and that is the entire metal. Silver's wide-open end dumps twice
+    # as fast as Bronze's, which makes its first strike about twice as loud -
+    # but with Bronze's damping it also *accumulated* like Bronze, so struck
+    # repeatedly it settled 2.5x higher and was simply the better bell in
+    # every respect, blurb notwithstanding. At this value it opens twice as
+    # loud and settles slightly below Bronze: everything at once, and then
+    # nothing, which is what it claims to be.
+    broadband_gain_per_sample=0.9740,
     lowpass_coef_per_sample=0.996,
     rad_admittance_fraction=0.94,     # wide open: pours it all out at once
     nl_threshold=3.6,
@@ -44,7 +51,7 @@ SILVER = InkType(
     coupler_range=26.0,
     cost_per_px=1.35,
     color=(206, 232, 255),
-    blurb="Wide open. Everything at once, and then nothing. Will not swell.",
+    blurb="Wide open. Twice as loud on the first strike, and then nothing left.",
 )
 
 BLACKGLASS = InkType(
@@ -53,12 +60,19 @@ BLACKGLASS = InkType(
     broadband_gain_per_sample=0.9992,
     lowpass_coef_per_sample=0.9945,
     rad_admittance_fraction=0.6,
-    nl_threshold=0.7,                 # folds early -> the octave, cheaply
+    # Folds early, which is the whole metal - but not so early that simply
+    # tapping it cooks it. At 0.7 repeated strikes drove it to char 1.24 and
+    # cracked it without the player ever holding the button, which is a trap
+    # rather than a tradeoff: the fragility has to be the price of the swell,
+    # not the price of using it at all. At 1.8 tapping takes it to 0.75 char -
+    # visibly close to the edge, never over it - while a swell still reaches
+    # the octave in 0.91s against Bronze's 1.11s.
+    nl_threshold=1.8,
     nl_asymmetry=0.55,                # asymmetric -> the *even* harmonic
     coupler_range=30.0,
     cost_per_px=1.7,
     color=(196, 150, 255),
-    blurb="Folds early. Climbs the octave on half a swell - and cracks on the way.",
+    blurb="Folds early. Reaches the octave soonest - and is always near cracking.",
 )
 
 ALL_METALS = [BRONZE, SILVER, BLACKGLASS]

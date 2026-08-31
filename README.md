@@ -98,10 +98,10 @@ The playtest is the one that matters. It reports:
 
 ```
    wave                    masher    ringer     tuner   founder
-   TOTAL                     2/36     14/36     27/36     36/36
+   TOTAL                     3/36     12/36     27/36     36/36
 ```
 
-A masher who ignores note, beat and range clears 2 of 36. Somebody who
+A masher who ignores note, beat and range clears 3 of 36. Somebody who
 tunes clears all of them. If those two numbers ever converge, the system is
 decoration and the harness says so.
 
