@@ -13,9 +13,14 @@ makes reverses. None of that is a lookup table — it is one wave simulation,
 and everything in the game is a consequence of it.
 
 Built on the digital-waveguide simulation specified in
-[`sigil-wave-design.md`](sigil-wave-design.md). The game design, and the
-seven simulation-layer bugs that had to be fixed before any of it worked,
-are in [`GAME_DESIGN.md`](GAME_DESIGN.md).
+[`sigil-wave-design.md`](sigil-wave-design.md). The game design is in
+[`GAME_DESIGN.md`](GAME_DESIGN.md); the mechanics pass that added world
+fields, spell archetypes, the anti-brute-force rule and the horror
+presentation is in [`MECHANICS.md`](MECHANICS.md).
+
+The arena is unlit. Everything you see is radiating — your ink, a mote in
+flight, a fire you started — and your light grows with your charge, so
+visibility and power are the same resource.
 
 ---
 
@@ -26,8 +31,27 @@ readout of what your drawing actually measures, and a test bench firing real
 pulses at a dummy you can retune. Nothing is at stake here.
 
 **The Field** — you cannot draw here. Take what you built and play it: aim,
-strike, sustain, switch, and stand in the right place. Clear the room,
-choose a reward, go back to the Forge.
+strike, sustain, release, switch, and stand in the right place. Clear the
+room, choose a reward, go back to the Forge.
+
+A sigil is not only a gun. What you drew decides what kind of thing it is:
+
+- **terminals** -> it radiates. Projectiles, aimed.
+- **a closed loop** -> it has no way out, so it *stores*. `Q` releases the
+  lot at once, and the spectrum decides whether that is a shockwave, a
+  firestorm, or an implosion.
+- **any charge at all** -> a near field that lays fire, freezes ground,
+  raises wind or thins matter, in a ring around you.
+- **dense ink in the way** -> incoming energy reflects off it.
+
+Fire spreads through the floor, burns out its fuel, and leaves ash. Freeze
+the ground ahead of it and it stops. **You read the same fields everything
+else does** — your own firestorm is a room you now have to cross.
+
+Hitting something with the wrong frequency does not merely do less damage.
+It is *absorbed*: the meter around the enemy fills, and when it does the
+thing heals, quickens, and shoves you off it. Brute force makes the problem
+worse.
 
 You start with three working sigils, so you can win the first room without
 understanding anything at all. Two of them, **Shove** and **Draw**, are the
@@ -49,6 +73,7 @@ else follows from noticing that.
 | `,` `.` | move the dummy nearer / further |
 | `I` | toggle the band ruler |
 | `E` | move the ignition point to the nearest node |
+| `L` | **the shelf** - load one of 12 prebuilt working sigils |
 | `N` | name this sigil |
 | `C` / `R` | clear canvas / reset bench |
 | `ESC` | descend into the room |
@@ -64,7 +89,7 @@ else follows from noticing that.
 | `1`-`4` / wheel | switch focus |
 | `SHIFT` / `SPACE` | dash |
 | `E` | stamp a relay |
-| `Q` | quench — dump everything you charged |
+| `Q` | **release** - dump everything a capacitor is holding, at once |
 
 ## Reading the screen
 
@@ -102,8 +127,10 @@ sigilwave/game/
   sigil.py               drawn ink -> a live instrument you can play
   inks.py                six materials, one physics knob each
   combat.py              pulses, resonant damage, antiphase cancellation
+  fields.py              the world as a medium: heat, wind, phase, fuel, fire
+  library.py             12 prebuilt working sigils (the shelf)
   enemies.py             five archetypes, each a lesson wearing a hitbox
-  field.py               the arena
+  field.py               the arena: auras, releases, barriers, world coupling
   forge.py               the drawing and testing screen
   viz.py                 drawing the invisible (the highest-leverage file)
   rooms.py / run.py      progression, rewards, the persistent codex

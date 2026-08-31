@@ -88,6 +88,8 @@ MAX_THERMAL = 4.0
 MAX_PHASE = 1.5
 MAX_KINETIC = 900.0
 
+_KERNELS = {}
+
 
 class FieldGrid:
     def __init__(self, width, height, rng=None):
@@ -114,10 +116,17 @@ class FieldGrid:
     # ------------------------------------------------------------ addressing
 
     def cell_of(self, pos):
-        return (
-            int(np.clip(pos[1] / CELL, 0, self.h - 1)),
-            int(np.clip(pos[0] / CELL, 0, self.w - 1)),
-        )
+        # Plain Python min/max, not np.clip. This is called tens of thousands
+        # of times a second and np.clip on two scalars costs more than the
+        # rest of the function put together — it was 120k calls and a third
+        # of the frame budget in a profile.
+        r = int(pos[1] / CELL)
+        c = int(pos[0] / CELL)
+        if r < 0: r = 0
+        elif r > self.h - 1: r = self.h - 1
+        if c < 0: c = 0
+        elif c > self.w - 1: c = self.w - 1
+        return r, c
 
     def sample_thermal(self, pos) -> float:
         r, c = self.cell_of(pos)
@@ -154,11 +163,17 @@ class FieldGrid:
         clo, chi = max(0, c0 - cr), min(self.w, c0 + cr + 1)
         if rlo >= rhi or clo >= chi:
             return
-        rr = np.arange(rlo, rhi, dtype=np.float32)[:, None] - r0
-        cc = np.arange(clo, chi, dtype=np.float32)[None, :] - c0
-        dist = np.sqrt(rr * rr + cc * cc)
-        falloff = np.clip(1.0 - dist / (cr + 0.5), 0.0, 1.0)
-        arr[rlo:rhi, clo:chi] += falloff * amount
+        # The falloff kernel depends only on cr, so build each one once. It
+        # was being recomputed — four array allocations and a sqrt — on every
+        # one of ~38,000 deposits per second.
+        kern = _KERNELS.get(cr)
+        if kern is None:
+            span = np.arange(-cr, cr + 1, dtype=np.float32)
+            dist = np.sqrt(span[:, None] ** 2 + span[None, :] ** 2)
+            kern = np.clip(1.0 - dist / (cr + 0.5), 0.0, 1.0)
+            _KERNELS[cr] = kern
+        sub = kern[rlo - (r0 - cr):rhi - (r0 - cr), clo - (c0 - cr):chi - (c0 - cr)]
+        arr[rlo:rhi, clo:chi] += sub * amount
 
     def add_thermal(self, pos, radius, amount):
         self._stamp(self.thermal, pos, radius, amount)

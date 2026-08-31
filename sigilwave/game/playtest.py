@@ -334,9 +334,48 @@ def main():
         failures.append("the Anchor falls to grinding but not to overdrive - lock is inverted")
 
     # --------------------------------------------------------------- gating
-    print("\n[5] band gating: right tool vs wrong tool, measured")
-    from .enemies import Anchor, Cinder, Ward
+    # ------------------------------------------------ the anti-brute-force rule
+    # The single most important assertion in this file. Before glut existed,
+    # a wrong-band hit was merely weak, weak is survivable, and so every gate
+    # in the game was advisory — a player could grind anything down with
+    # their opening sigil and never engage with the system at all. Both
+    # directions get checked, because the failure modes are opposite and both
+    # are silent: too lenient and brute force reopens, too strict and correct
+    # play starts feeding the enemies it is beating.
+    print("\n[5] glut: does the wrong band make things WORSE?")
+    from .combat import Pulse as _P
+    from .enemies import Cinder as _C, Ward as _W
     from .starters import shove, spark
+    import sigilwave.game.library as _lib
+
+    rows = []
+    for tname, tfac, tband in (("Shove  (band 1)", shove, 1),
+                               ("Needle (band 3.5)", _lib.BY_NAME["Needle"], 4)):
+        for ename, ecls, eband in (("Cinder b1", _C, 1), ("Ward b4", _W, 4)):
+            e = ecls(pygame.Vector2(0, 0))
+            sig = tfac()
+            sig.set_hold(True)
+            for _ in range(500):
+                for em in sig.advance(0.01):
+                    e.take_pulse(
+                        _P((0, 0), (1, 0), em.bands, em.kinetic_sign, em.thermal_sign), [])
+            frac = max(0.0, e.hp) / e.max_hp
+            correct = tband == eband
+            rows.append((correct, frac, e.surges))
+            print(f"    {tname:18} vs {ename:10} -> hp {frac * 100:5.1f}%  "
+                  f"surges {e.surges:3}   {'(correct)' if correct else '(WRONG BAND)'}")
+
+    if any(surges > 0 for correct, _f, surges in rows if correct):
+        failures.append("correct-band fire is feeding enemies - glut threshold too strict")
+    if any(f > 0.02 for correct, f, _s in rows if correct):
+        failures.append("the correct band does not reliably kill")
+    if any(f < 0.5 for correct, f, _s in rows if not correct):
+        failures.append("the wrong band still grinds enemies down - brute force is open")
+    if not any(s > 0 for correct, _f, s in rows if not correct):
+        failures.append("wrong-band fire never triggers a surge - glut is inert")
+
+    print("\n[6] band gating: right tool vs wrong tool, measured")
+    from .enemies import Anchor, Cinder, Ward
 
     for ecls in (Cinder, Ward, Anchor):
         row = []
