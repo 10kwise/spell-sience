@@ -720,6 +720,22 @@ embarrassed §5's claim that eleven is the right number.
 | `sigilwave/rig/creatures.py` | one rule, four species |
 | `sigilwave/rig/bench.py` | the bench — `python -m sigilwave.rig.bench` |
 
-Still missing before this is a game: the station, a dive that can end, and
-wiring the honest thrust in `couple.thrust_from` into `diver.py` in place of
-`THRUST_PER_ENERGY`.
+`Diver.rig_thrust` is wired and measured. `THRUST_PER_ENERGY` is retired for
+rigs and survives only for `impulse_from`, where the thing being thrown really
+is sound and the lie really is still necessary. Measured over the same four
+seconds SUBMERGED used for its own baseline:
+
+| | moved |
+|---|---|
+| the thruster, 2719 N | **80.9 px** |
+| the charge, 10875 N | **238.8 px** |
+| the heater, no jet | **0.0 px** |
+| SUBMERGED's drawn machine, for comparison | 101-134 px |
+
+The charge out-thrusts the thruster three to one, because nozzles multiply
+exit velocity and thrust is `mdot x v`. So the best way to travel is also a
+weapon that shoves you off your aim, which is a tradeoff nobody placed.
+
+Still missing before this is a game: the station, and a dive that can end.
+And the second go/no-go question in 12 is still open, because it is the one a
+machine cannot answer.

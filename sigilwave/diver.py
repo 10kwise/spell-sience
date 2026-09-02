@@ -41,7 +41,16 @@ V = pygame.Vector2
 # all, with flailing beating both. A machine radiating continuously pushes
 # continuously, so thrust reads the per-step radiated energy instead and the
 # batching cannot reach it.
+#
+# RETIRED for rigs, and kept for sound. `Diver.rig_thrust` computes momentum
+# flux honestly because a rig ejects water; this constant survives only for
+# `impulse_from`, where the thing being thrown really is sound and the lie
+# really is still necessary.
 THRUST_PER_ENERGY = 1300.0
+
+# A diver and their gear. Needed the moment thrust became a real force in
+# newtons rather than a scaled energy, and it is a person rather than a knob.
+DIVER_MASS = 90.0         # kg
 
 # Quadratic drag: F = -k |v| v. Water, not air -- the point is that speed is
 # expensive and stopping is free.
@@ -113,6 +122,36 @@ class Diver:
             return V(0.0, 0.0)
         # Flow runs from heavy toward light along the anomaly.
         return V(-dx, -dy) * CURRENT_GAIN
+
+    def rig_thrust(self, result, direction) -> V:
+        """Acceleration from a RIG's port, in px/s^2. RIGS.md 10.
+
+        This is the method that retires `THRUST_PER_ENERGY`, and the retirement
+        is the point. That constant is a named lie because real acoustic
+        radiation pressure cannot move a diver -- SUBMERGED said so out loud
+        and used it anyway, because sound was the only thing a machine could
+        make.
+
+        A rig ejects water. So the number is `mdot * v / m`, which is what a
+        jet is, and there is nothing left to name. The one quantity that had to
+        be added is the diver's own mass, and 90 kg is a person and their gear
+        rather than a tuning knob.
+
+        It is also CONTINUOUS rather than per-front. `impulse_from` below is a
+        kick applied once when a front is thrown; a pump running is a force
+        that persists, so this returns an acceleration for `step` to integrate
+        and does not touch velocity itself.
+        """
+        from .rig import couple
+
+        newtons = couple.thrust_from(result)
+        if newtons <= 0.0:
+            return V(0.0, 0.0)
+        d = V(direction)
+        if d.length_squared() < 1e-12:
+            return V(0.0, 0.0)
+        # The reaction points opposite the way the port faces.
+        return -d.normalize() * (newtons / DIVER_MASS)
 
     def impulse_from(self, fronts_born) -> V:
         """Newton's third law, once per front. A mouth throws energy one way

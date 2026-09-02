@@ -254,6 +254,33 @@ def test_thrust_is_momentum_flux():
           f"vector {v}")
     _report("thruster", f"{r.out_speed:.2f} m/s -> {t:.0f} N")
 
+    # And it actually moves a diver, which is the point of retiring the lie.
+    # SUBMERGED measured its own baseline over the same four seconds: a driven
+    # machine 101-134 px, kicking 14 px, nothing 3.7 px. A rig-driven diver has
+    # to land in that band or the honest number is not usable in the game the
+    # dishonest one was tuned for.
+    import pygame
+
+    from ..diver import Diver
+
+    moved = {}
+    for name in ("the thruster", "the charge", "the heater"):
+        rr = library.build(name).evaluate(amb)
+        d = Diver((600.0, 200.0))
+        acc = d.rig_thrust(rr, pygame.Vector2(1.0, 0.0))
+        for _ in range(240):
+            d.step(1.0 / 60.0, med, thrust=acc, bounds=(640, 480))
+        moved[name] = (d.pos - pygame.Vector2(600.0, 200.0)).length()
+
+    check("a jet moves the diver, in SUBMERGED's own measured band",
+          60.0 < moved["the thruster"] < 200.0,
+          f"{moved['the thruster']:.1f} px in 4 s")
+    check("and a machine that makes no jet moves them not at all",
+          moved["the heater"] < 1.0,
+          f"{moved['the heater']:.1f} px")
+    for name, px in moved.items():
+        _report(name, f"{px:.1f} px in 4 s")
+
 
 def test_sound_leaves_through_the_port():
     print("\n[8] acoustic output becomes a front the medium can propagate")
