@@ -173,6 +173,27 @@ SATURATED_WORKING_FRACTION = 0.020
 # that expands before it squeezes compresses better than one that does not.
 MAX_WORKING_FRACTION = 0.045
 
+# How fast the free-gas fraction grows when the pressure drops -- and shrinks
+# again when it rises, because compression drives gas back into solution.
+#
+# The two directions have to use the SAME factor, and the version that only
+# grew it was a bug with a large tail. The working fluid ratcheted up through
+# five expansions, stayed at the ceiling through the recompression, and each
+# return step therefore did full-strength work at a temperature the previous
+# step had already raised. The lamp came back at +155 degC at 400 m purely
+# from that asymmetry. Nucleation and re-dissolution are the same process run
+# backwards and the code now says so.
+WORKING_NUCLEATION = 1.35
+MIN_WORKING_FRACTION = 0.012
+
+# The floor is not cosmetic. Compression dissolving its own working fluid gives
+# stacked squeezes genuine diminishing returns, which is good physics and a
+# good rule -- but with no floor it converged so fast that IT BOILS became
+# unreachable by squeezing at all, and a failure mode you cannot reach is not
+# a failure mode. Measured at the station: 5 squeezes reach 63 degC, 9 reach
+# 99, and 11 reach 119. So stacking still works, it just pays less each time,
+# and cooking yourself remains a thing you can do by trying too hard.
+
 # --- CHOSEN NUMBER 2: RIG_MASS_FLOW ------------------------------------------
 #
 # How much water a rig moves per second, in kg. A real 50 L/s industrial pump
@@ -192,7 +213,14 @@ RIG_MASS_FLOW = 240.0
 # THE IMPORTANT PART: this is applied at the BOUNDARY, in couple.py, AFTER the
 # rig's ledger has balanced. The rig's own books are exact to float precision.
 # Only the amount that lands in the water is amplified, and it says so.
-THERMAL_COUPLING = 900.0
+#
+# The value is NOT chosen for visibility. SUBMERGED 8.2 requires sound-speed
+# contrast to stay inside 1.05-1.5x or the critical angle stops existing and
+# every boundary becomes a perfect mirror; working that back through field.py's
+# own numbers makes the whole usable band a 0.54-5.4 degC anomaly. This is set
+# so a second of running lands in the middle of that band. The first value was
+# 900 and crossed the entire band in under half a second. See couple.py.
+THERMAL_COUPLING = 170.0
 
 # --- CHOSEN NUMBER 4: GAS_COUPLING -------------------------------------------
 #
@@ -201,7 +229,7 @@ THERMAL_COUPLING = 900.0
 # hundreds of tonnes moves it by nothing. Amplified at the boundary, exactly
 # and only there, so that stripping a room of its gas is something a player
 # can actually do -- which is what makes it a consequence rather than a note.
-GAS_COUPLING = 620.0
+GAS_COUPLING = 30.0
 
 # --- cavitation: the tear point ----------------------------------------------
 #
@@ -239,6 +267,22 @@ ECONOMY_JOULES_PER_UNIT = 2.0e6
 
 BOIL_TEMP = 100.0         # degC. The rig cooks and so do you.
 STALL_FLOW = 3.2          # how much more flow than one intake supplies
+
+# Water stops cooling at freezing. Neither number here is chosen: 0 degC is
+# where water freezes and 334 kJ/kg is its latent heat of fusion.
+#
+# This was added after the fact, and the reason is worth recording. Without a
+# floor the cold side ran away: five expansions at 400 m took the slug to
+# -37.65 degC, and because compression work scales with absolute temperature
+# the return leg then compounded and delivered water at +101 degC. Both ends
+# were nonsense and they were the same bug.
+#
+# Freezing is the physical answer and it turns out to be the better design
+# answer too. IT BOILS had no partner, and the vocabulary is built out of
+# opposed pairs (RIGS.md 5) -- so the hot end failing and the cold end failing
+# are now the same shape of mistake, reached from opposite directions.
+FREEZE_TEMP = 0.0
+LATENT_HEAT_FUSION = 334000.0    # J/kg
 
 
 def working_fraction(gas: float, pressure_bar: float, temp_c: float) -> float:

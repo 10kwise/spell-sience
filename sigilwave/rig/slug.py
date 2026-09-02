@@ -133,6 +133,8 @@ class Ledger:
     tank_gas: float = 0.0           # kg of gas held
 
     flow_out: float = 0.0           # J of pressure energy dumped at a port
+    latent: float = 0.0             # J the slug gave up freezing instead of cooling
+    bubbles_shed: float = 0.0       # kg of gas left behind as a cavitation cloud
 
     # bookkeeping
     reference_temp: float = 0.0     # degC the intake started at
@@ -149,12 +151,20 @@ class Ledger:
         chain in the library, at every depth, which is the check that makes
         RIGS.md's claim to be a system rather than a pile of effects real.
         """
-        held = 0.0
+        # `latent` is energy that genuinely left the slug but is not visible in
+        # its temperature, because it came out of the phase change instead.
+        #
+        # It is subtracted UNCONDITIONALLY, and that placement is the whole of
+        # the bug this comment exists for. Written inside the `slug is not
+        # None` branch it silently vanished the moment a PORT consumed the
+        # slug, and every chain that froze came back 41 MJ out. Ice does not
+        # stop existing because the water left the pipe.
+        held = -self.latent
         if slug is not None:
-            held = (slug.internal(self.reference_temp)
-                    + slug.kinetic
-                    + slug.note_amp
-                    + slug.flow_energy(self.reference_pressure))
+            held += (slug.internal(self.reference_temp)
+                     + slug.kinetic
+                     + slug.note_amp
+                     + slug.flow_energy(self.reference_pressure))
         return (
             (self.work_in + self.heat_from_ocean)
             - (self.work_out + self.heat_to_ocean + self.kinetic_out
@@ -170,7 +180,8 @@ class Ledger:
         INJECT moves it back, and a port hands whatever is left to the ocean.
         """
         held = slug.mass * slug.gas if slug is not None else 0.0
-        return self.gas_from_ocean - self.gas_to_ocean - self.tank_gas - held
+        return (self.gas_from_ocean - self.gas_to_ocean - self.tank_gas
+                - self.bubbles_shed - held)
 
     @property
     def net_work(self) -> float:
@@ -191,6 +202,8 @@ class Ledger:
         self.acoustic_out += other.acoustic_out
         self.heat_out += other.heat_out
         self.flow_out += other.flow_out
+        self.latent += other.latent
+        self.bubbles_shed += other.bubbles_shed
         self.tank_heat += other.tank_heat
         self.tank_gas += other.tank_gas
         self.gas_from_ocean += other.gas_from_ocean

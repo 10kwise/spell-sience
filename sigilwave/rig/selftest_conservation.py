@@ -304,7 +304,7 @@ def test_depth_flips_the_sign():
                     f"({g_deep.ledger.tank_gas / max(g_shallow.ledger.tank_gas, 1e-9):.1f}x)")
 
     # the boiler: cold water lets you push harder
-    boiler = ("INTAKE",) + ("SQUEEZE",) * 7 + ("PORT",)
+    boiler = ("INTAKE",) + ("SQUEEZE",) * 10 + ("PORT",)
     b_shallow = Chain(boiler).evaluate(ambient_at(40))
     b_deep = Chain(boiler).evaluate(ambient_at(400))
     check("the boiler cooks at the station", not b_shallow.runs
@@ -354,7 +354,7 @@ def test_the_four_failures_are_reachable_and_distinct():
     amb = ambient_at(40)
     cases = {
         "IT DOES NOTHING": ("SQUEEZE", "SQUEEZE"),
-        "IT BOILS": ("INTAKE",) + ("SQUEEZE",) * 7 + ("PORT",),
+        "IT BOILS": ("INTAKE",) + ("SQUEEZE",) * 10 + ("PORT",),
         "IT STALLS": ("INTAKE",) + ("PUMP",) * 4 + ("PORT",),
     }
     for want, kinds in cases.items():

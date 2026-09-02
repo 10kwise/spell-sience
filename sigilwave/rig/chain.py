@@ -65,6 +65,8 @@ class Result:
     ambient: Ambient
     fault: Fault | None = None
     tore: bool = False
+    froze: bool = False
+    frozen: float = 0.0
     peak_temp: float = 0.0
     min_pressure: float = 0.0
     flow: float = 1.0
@@ -159,6 +161,8 @@ class Chain:
         opened = False
         ported = False
         tore = False
+        froze = False
+        ice = 0.0
         peak = ambient.temp
         lowest = ambient.pressure
         pumps = 0
@@ -184,6 +188,18 @@ class Chain:
                     pumps += 1
                 if "tore" in events:
                     tore = True
+                # One place for the freezing floor, applied after every module
+                # so that no module can forget it (modules.freeze_clamp).
+                mod.freeze_clamp(s, led)
+                if s is not None:
+                    # The PEAK, not the final value. A chain can freeze solid
+                    # partway and thaw again at the port, and the pipe having
+                    # been blocked is the thing that matters -- reporting only
+                    # the end state showed 0.31 for a machine that had iced up
+                    # completely three modules earlier.
+                    ice = max(ice, mod.frozen_fraction(s, led))
+                    if ice >= 1.0:
+                        froze = True
 
             if s is not None:
                 peak = max(peak, s.temp)
@@ -218,10 +234,12 @@ class Chain:
                     r.out_bubbles = st.bubbles or 0.0
                     break
 
-        r.fault = self._fault(opened, ported, peak, flow, led)
+        r.froze = froze
+        r.frozen = ice
+        r.fault = self._fault(opened, ported, peak, flow, led, froze)
         return r
 
-    def _fault(self, opened, ported, peak, flow, led) -> Fault | None:
+    def _fault(self, opened, ported, peak, flow, led, froze=False) -> Fault | None:
         """Which of the four (RIGS.md 7). Order matters: the earliest cause wins."""
         if not opened:
             return Fault(
@@ -239,6 +257,11 @@ class Chain:
                 f"Peak internal temperature reached {peak:.0f} C with nowhere "
                 f"to send it. Heat is moved, never destroyed -- add a COIL, "
                 f"or squeeze less.")
+        if froze:
+            return Fault(
+                "IT FREEZES",
+                "You cooled the water past freezing and the pipe iced up. "
+                "Expand less, or put a COIL in to let the ocean warm it back.")
         if flow > STALL_FLOW:
             return Fault(
                 "IT STALLS",
@@ -291,7 +314,9 @@ class Chain:
         """
         if result.fault:
             return {"IT BOILS": "It boils",
-                    "IT STALLS": "It stalls"}.get(result.fault.kind, "It does nothing")
+                    "IT FREEZES": "It freezes",
+                    "IT STALLS": "It stalls"}.get(result.fault.kind,
+                                                  "It does nothing")
         led = result.ledger
         dT = result.delta_temp
         if result.tore:

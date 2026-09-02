@@ -138,13 +138,14 @@ PRESETS = [
     ),
     Preset(
         name="the boiler",
-        kinds=("INTAKE", "SQUEEZE", "SQUEEZE", "SQUEEZE", "SQUEEZE",
-               "SQUEEZE", "SQUEEZE", "SQUEEZE", "PORT"),
+        kinds=("INTAKE",) + ("SQUEEZE",) * 10 + ("PORT",),
         summary="Cooks itself, and you with it.",
-        why="Seven squeezes and nowhere for the heat to go. This is the honest "
+        why="Ten squeezes and nowhere for the heat to go. This is the honest "
             "answer to 'why can I not just stack more' -- you can, and heat "
             "is never destroyed, so it ends up in the housing you are "
-            "holding.",
+            "holding. Note how each squeeze buys less than the last: "
+            "compressing water drives its gas back into solution, and the "
+            "gas is what you were compressing.",
         try_this="Put a COIL after every second SQUEEZE. It stops boiling and "
                  "becomes the strongest cooler in the library, because each "
                  "stage starts from ambient instead of from the last one.",

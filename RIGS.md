@@ -225,9 +225,49 @@ energy. The honest answer is that the flow simply fails to reach that speed:
 a nozzle can only spend the pressure it has, and past that the throat
 cavitates and chokes.
 
+**A port that did not re-pressurise made the whole cycle pointless.** The
+density search (§12) found this and it was the worst bug of the lot. A bare
+`EXPAND` was reported as a cooler — one module, −5.1 °C, 0.17 units — while the
+proper refrigerator cost 6.03 units and cooled *less*. The cheapest way to
+cool was to skip the entire cycle. The cause: a port released water still
+sitting at a third of ambient pressure, which the ocean would simply push back
+in. Water has to be handed back **at ambient**, and compressing it back up
+re-heats it — undoing exactly the cooling the expansion bought. With that in
+place a bare expand-and-release nets to nothing and the COIL is the only thing
+that works.
+
+**Water freezes, and that had to be a law.** Without a floor the cold side ran
+away: five expansions at 400 m reached −37.65 °C and the return leg then
+delivered water at +101 °C. Both ends were nonsense and they were the same
+bug. Freezing is the physical answer (0 °C, 334 kJ/kg, neither number chosen)
+and it is the better design answer too — **IT BOILS had no partner**, and the
+vocabulary is built out of opposed pairs. See §7.
+
+**Freeze and thaw have to be symmetric, and so do nucleation and
+re-dissolution.** Two separate versions of the same mistake. Capping the cold
+side while still charging full price on the warm side made output swing
+**+78.91, −9.98, +16.56 °C as EXPANDs were added one at a time** — precisely
+the unlearnable non-monotonicity §2.1 condemns. And letting the working fluid
+grow on expansion without shrinking on compression let it ratchet to the
+ceiling and stay there, which is where the +155 °C lamp came from.
+
+**A collapsing cavity leaves a cloud.** The collapse restored ambient pressure
+and the gas went quietly back into solution, so the loudest thing in the
+vocabulary left no trace in the water at all. A real cavitation collapse
+shatters into microbubbles that outlast the pressure recovering — which is
+what a cavitating propeller's wake looks like, and it is the cover the charge
+is supposed to leave behind.
+
 ### 4.4 What the books say now
 
-`python -m sigilwave.rig.selftest_conservation` — **26/26.**
+Four suites, **78 checks, all green.**
+
+| | |
+|---|---|
+| `selftest_conservation` | **26/26** |
+| `selftest_couple` | **23/23** |
+| `selftest_density` | **9/9** |
+| `selftest_creatures` | **20/20** |
 
 | | |
 |---|---|
@@ -238,8 +278,10 @@ cavitates and chokes.
 
 The fuzzing is the check that matters. The failure this design is most exposed
 to is a five-module combination nobody thought to try that quietly runs a free
-heat engine, and two such bugs were caught this way while the modules were
-being written.
+heat engine, and **two such bugs were caught exactly this way** — a turbine
+recovering work from below ambient, and an expansion valve returning its work
+to the economy, which converted ambient ocean heat into work with no cold sink.
+A Kelvin-Planck violation whose books balanced perfectly.
 
 ---
 
@@ -367,23 +409,32 @@ already measured. What it was missing was a player who could write to it.
 
 ---
 
-## 7. The four failures
+## 7. The four failures, which turned out to be four plus an event
 
-There are exactly four ways a rig can be wrong. Each has an unmistakable
-animation and each points at its own cause. This is what §2.2 of SUBMERGED was
-asking for and never supplied.
+The design said four. Building it produced **four faults and one event**, and
+the split is better than the original list.
 
-| | looks like | means |
-|---|---|---|
-| **IT DOES NOTHING** | the slug stops at a module and sits there | no intake, or no port — the pipe is not open at both ends |
-| **IT BOILS** | the rig glows, then steams, then you cook | heat with nowhere to go. You have no coil, or your coil sits in water that is already hot |
-| **IT TEARS** | a bang and a flash inside the housing | pressure dropped past the tear point somewhere you did not want it |
-| **IT STALLS** | the chain runs dry and stutters | you asked for more flow than the intake supplies |
+| the fault | looks like | means | first reached by |
+|---|---|---|---|
+| **IT DOES NOTHING** | the slug stops at a module and sits there | no intake, or no port — the pipe is not open at both ends | any chain missing a bracket |
+| **IT BOILS** | the rig glows, then steams, then you cook | heat with nowhere to go. No coil, or a coil in water already hot | **11 × SQUEEZE** |
+| **IT FREEZES** | the pipe ices up and blocks | you cooled past freezing and the latent capacity ran out | **9 × EXPAND** |
+| **IT STALLS** | the chain runs dry and stutters | you asked for more flow than the intake supplies | **3 × PUMP** |
 
-All four are legible from the slug alone, all four have an obvious first thing
-to try, and two of them (**TEARS**, **BOILS**) are things you will later build
-on purpose. That is the §11.1 hazard-to-tool ladder arriving inside the
-machine instead of only out in the world.
+**IT FREEZES was not designed; the physics demanded it** (§4.3), and it is the
+partner IT BOILS never had. The vocabulary is built out of opposed pairs, and
+now so are its failures: the hot end and the cold end are the same mistake
+reached from opposite directions.
+
+**IT TEARS is not a fault, it is an event.** Cavitation is something you build
+on purpose at least as often as you suffer it — the charge and the lamp are
+both nothing but a controlled tear — so it is reported alongside the verdict
+rather than instead of it. A rig can tear and run perfectly.
+
+All four faults are legible from the slug alone, all four have an obvious
+first thing to try, and two of them (**BOILS**, **FREEZES**) are things you
+will later build on purpose. That is the §11.1 hazard-to-tool ladder arriving
+inside the machine instead of only out in the world.
 
 ---
 
@@ -464,6 +515,39 @@ Note the last two. **If creatures read fields, so does whatever is hunting
 you**, and the same rig that finds prey advertises you to a predator. Defence
 and offence are the same verb aimed differently, which is the property that
 makes a sandbox worth living in rather than a toolbox worth clearing.
+
+All five are built and measured (`selftest_creatures`, 20/20). `creatures.py`
+contains no code for any of them: one comfort function, one gradient climb, and
+four species that differ only in their numbers.
+
+### 9.0 Two things the measuring found, both better than what was designed
+
+**Heat herds. Sound calls.** Nobody designed a range law, and there is one.
+`field.py` diffuses heat at 60 px²/s, so a patch spreads about 17 px in five
+seconds and the usable gradient around it is gone by 140 px. Measured on a cold
+pocket:
+
+| distance | comfort | |
+|---|---|---|
+| 220 px | 5.196e-04 | nothing to read |
+| 140 px | 5.204e-04 | 0.2% — still nothing |
+| 90 px | 6.638e-04 | the gradient begins |
+| 40 px | 6.546e-02 | strong |
+
+Sound falls off as `1/(1+(d/120)²)` instead, and a shoalfish crosses 260 px to
+a groan. So **thermal tools are local and slow, and acoustic tools reach across
+a room** — which means the sonar a player builds for navigation is also the
+only thing that can call something from a distance. Two of the six verbs
+divided their labour without being told to.
+
+**A bubble curtain is not thermally silent.** Bubbles lighten water, lighter
+water rises, and warm water follows it up. Measured across a curtain's own row
+after ten seconds: **+0.16 °C at the centre**, +0.02 °C at 60 px. So a
+heat-hunter finds your curtain too — by the convection it drives rather than by
+the bubbles themselves. Cover from one sense advertises you to another, through
+a coupling nobody wrote: `field.py` was already doing it and the creature was
+already reading it. That is §6.1 arriving unprompted, and it means bubble cover
+has a real cost.
 
 ### 9.1 Depth flips the sign on almost everything
 
@@ -585,3 +669,57 @@ The metric from SUBMERGED §14 stands and gets easier to measure here:
 **solution diversity** — how many structurally different chains solve the same
 problem, and how far apart they are. A list is trivially diffable. A graph was
 not.
+
+### 12.1 Both tests were run. Both passed, and not narrowly.
+
+`python -m sigilwave.rig.selftest_density` — **9/9.** The search touches no
+transform code and invents no module.
+
+**Test 1, density. Asked for ten; found 352.** Distinct outcome classes at
+200 m, clustered on measured outputs rather than on the modules used, so two
+chains that do the same thing collapse to one class. All four faults reachable
+by a well-formed machine.
+
+**Test 2, solution diversity. 143 structurally distinct machines solve one
+task**, over a **275× cost spread** (0.23 to 62.03 units). The task was
+"deliver water at least 8 °C colder than ambient at 200 m", and structurally
+distinct means a different *bag* of modules, not a reordering. That is the
+number that separates a system from a puzzle, and CAMPANARY's harness could
+never have produced it.
+
+**Order is the whole game, measured.** One bag of three modules — SQUEEZE,
+COIL, EXPAND — gives four different machines across six orderings:
+
+| the order | what it is | |
+|---|---|---|
+| `SQUEEZE COIL EXPAND` | **a cooler** | −2.72 °C |
+| `SQUEEZE EXPAND COIL` | does nothing | +0.70 °C |
+| `EXPAND SQUEEZE COIL` | does nothing | +0.94 °C |
+| `COIL SQUEEZE EXPAND` | a heater | +7.05 °C |
+| `EXPAND COIL SQUEEZE` | **a heater** | +14.31 °C |
+
+Same three parts, same cost, 17 °C apart. And the cascade's own claim holds:
+coils *between* the squeezes give −7.10 °C, the same modules with both coils
+moved to the end give **+0.11 °C**.
+
+**Every module earns its place.** Deleting any one of the nine body modules
+makes between 11 and 71 outcome classes unreachable. There is no dead weight
+in the vocabulary, which is the inverse check and the one that would have
+embarrassed §5's claim that eleven is the right number.
+
+### 12.2 What is built
+
+| | |
+|---|---|
+| `sigilwave/rig/units.py` | the constants, and every named lie |
+| `sigilwave/rig/slug.py` | the five numbers, and the ledger that must balance |
+| `sigilwave/rig/modules.py` | the eleven transforms |
+| `sigilwave/rig/chain.py` | the walk, the sentence, the faults |
+| `sigilwave/rig/library.py` | eleven machines, each with one thing to change |
+| `sigilwave/rig/couple.py` | the boundary with the real ocean |
+| `sigilwave/rig/creatures.py` | one rule, four species |
+| `sigilwave/rig/bench.py` | the bench — `python -m sigilwave.rig.bench` |
+
+Still missing before this is a game: the station, a dive that can end, and
+wiring the honest thrust in `couple.thrust_from` into `diver.py` in place of
+`THRUST_PER_ENERGY`.

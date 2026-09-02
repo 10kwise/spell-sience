@@ -48,14 +48,18 @@ from .units import (
     ETA_RESONATOR,
     ETA_TURBINE,
     MAX_WORKING_FRACTION,
+    MIN_WORKING_FRACTION,
     PASCALS_PER_BAR,
     PRESSURE_RATIO,
     PUMP_WORK,
     RESONATOR_WORK,
     RIG_MASS_FLOW,
     RHO_WATER,
+    FREEZE_TEMP,
+    LATENT_HEAT_FUSION,
     TEAR_PRESSURE,
     VAPOUR_PRESSURE,
+    WORKING_NUCLEATION,
     compression_work,
     gas_capacity,
     working_fraction,
@@ -145,8 +149,36 @@ class Port(Module):
         )
 
     def apply(self, s, amb, led):
+        """Hand the water back -- which means handing it back AT AMBIENT.
+
+        The density search found the bug this fixes, and it was a bad one. A
+        bare EXPAND was reported as a cooler: one module, -5.1 degC, 0.17
+        units. The proper refrigerator -- SQUEEZE, COIL, EXPAND -- cost 6.03
+        units and cooled LESS. So the cheapest way to cool was to skip the
+        entire cycle, and the central lesson of RIGS.md 4.1 was not merely
+        unrewarded, it was actively punished.
+
+        The cause was that a port simply released whatever it was holding,
+        including a slug still sitting at a third of ambient pressure. Water
+        cannot leave into the ocean at a third of ambient; the ocean pushes
+        back in. It has to be brought up to ambient first, and compressing it
+        back up RE-HEATS it -- undoing precisely the cooling the expansion
+        bought.
+
+        With the recompression in place a bare expand-and-release nets to
+        nothing, and the only way to keep the cold is to get rid of the heat
+        while the water is still compressed, which is what the COIL is for.
+        That is the actual refrigeration cycle, and it is now the only thing
+        that works.
+        """
         if s is None:
             return None, []
+
+        # The ocean's own pressure, not the intake's: a rig can port into
+        # different water than it drew from, and that difference is a thing a
+        # player can build around.
+        _equalise(s, amb.pressure, led)
+
         # Everything the slug still holds leaves the rig. This is the only
         # module that touches the ocean (RIGS.md 5.3), so it is also the only
         # place the ledger's outward terms are written.
@@ -172,10 +204,14 @@ class Squeeze(Module):
         # divides the requirement and does not scale the heating.
         work = ideal / ETA_COMPRESSOR
         led.work_in += work
-        s.temp += work / (s.mass * C_P_WATER)
+        add_heat(s, work, led)
         before = s.flow_energy(led.reference_pressure)
         s.pressure = p2
         _book_flow(s, before, led)
+        # Compression drives gas back into solution -- the exact inverse of
+        # EXPAND's nucleation, and it must use the same factor or the pair
+        # stops being a pair.
+        s.working = max(MIN_WORKING_FRACTION, s.working / WORKING_NUCLEATION)
         return s, _gas_events(s)
 
 
@@ -231,10 +267,12 @@ class Expand(Module):
         # Expanding frees gas that was in solution, so the working fluid grows
         # -- which is why a chain that expands before it squeezes compresses
         # better than one that does not.
-        s.working = min(MAX_WORKING_FRACTION, s.working * 1.35)
+        s.working = min(MAX_WORKING_FRACTION,
+                        s.working * WORKING_NUCLEATION)
 
         if s.pressure <= TEAR_PRESSURE:
             events.append("tore")
+            _collapse(s, amb, led)
         events.extend(_gas_events(s))
         return s, events
 
@@ -249,7 +287,7 @@ class Narrow(Module):
     def apply(self, s, amb, led):
         if s is None:
             return None, []
-        return _bernoulli(s, 1.0 / AREA_RATIO, led)
+        return _bernoulli(s, 1.0 / AREA_RATIO, led, amb)
 
 
 class Widen(Module):
@@ -262,7 +300,7 @@ class Widen(Module):
     def apply(self, s, amb, led):
         if s is None:
             return None, []
-        return _bernoulli(s, AREA_RATIO, led)
+        return _bernoulli(s, AREA_RATIO, led, amb)
 
 
 class Filter(Module):
@@ -320,7 +358,7 @@ class Inject(Module):
             return None, []
         events = []
         if led.tank_heat > 0.0:
-            s.temp += led.tank_heat / (s.mass * C_P_WATER)
+            add_heat(s, led.tank_heat, led)
             led.tank_heat = 0.0
             events.append("released heat")
         if led.tank_gas > 0.0:
@@ -346,7 +384,7 @@ class Pump(Module):
         gained = PUMP_WORK * ETA_PUMP
         lost = PUMP_WORK - gained
         s.speed = math.sqrt(max(0.0, 2.0 * (s.kinetic + gained) / s.mass))
-        s.temp += lost / (s.mass * C_P_WATER)
+        add_heat(s, lost, led)
         return s, []
 
 
@@ -364,7 +402,7 @@ class Coil(Module):
         # it is exchanging with, which is what makes RIGS.md 9.1 true: cold
         # deep water is a better sink, so coolers get stronger with depth.
         q = (s.temp - amb.temp) * s.mass * C_P_WATER * ETA_COIL
-        s.temp -= q / (s.mass * C_P_WATER)
+        add_heat(s, -q, led)
         if q >= 0.0:
             led.heat_to_ocean += q
         else:
@@ -388,14 +426,14 @@ class Resonator(Module):
         lost = RESONATOR_WORK - acoustic
         s.note = NOTES[self.option]
         s.note_amp += acoustic
-        s.temp += lost / (s.mass * C_P_WATER)
+        add_heat(s, lost, led)
         return s, []
 
 
 # --- shared machinery --------------------------------------------------------
 
 
-def _bernoulli(s, area_scale, led):
+def _bernoulli(s, area_scale, led, amb):
     """Speed for pressure, at constant energy. No work in, no work out.
 
     A nozzle converts pressure energy into kinetic energy and a diffuser does
@@ -437,9 +475,99 @@ def _bernoulli(s, area_scale, led):
         bang = s.kinetic * 0.5
         s.note_amp += bang
         s.speed = (2.0 * max(0.0, s.kinetic - bang) / s.mass) ** 0.5
+        if s.note <= 0.0:
+            s.note = NOTES["chirp"]
+        _collapse(s, amb, led)
         events.append("tore")
     events.extend(_gas_events(s))
     return s, events
+
+
+def _equalise(s, target, led):
+    """Bring the slug to a pressure in the same steps it left it by.
+
+    This is stepwise rather than one jump, and the reason is a bug worth
+    recording. Compression work scales with absolute temperature, so five
+    small expansions and one big recompression are NOT inverses: the charge
+    came back at +143 degC and the lamp at +201 degC, because the return leg
+    computed its work at a temperature the outbound leg never visited.
+
+    Walking back in the same PRESSURE_RATIO steps makes the two paths
+    comparable, and what is left over is exactly the efficiency asymmetry --
+    which is the Second Law and is supposed to be there.
+    """
+    if target <= 0.0:
+        return
+    guard = 0
+    while abs(s.pressure - target) > 1e-9 and guard < 64:
+        guard += 1
+        if s.pressure < target:
+            step = min(target, s.pressure * PRESSURE_RATIO)
+            ideal = compression_work(s.mass, s.working, s.temp, s.pressure, step)
+            work = max(0.0, ideal) / ETA_COMPRESSOR
+            led.work_in += work
+            add_heat(s, work, led)
+            s.working = max(MIN_WORKING_FRACTION,
+                            s.working / WORKING_NUCLEATION)
+        else:
+            step = max(target, s.pressure / PRESSURE_RATIO)
+            ideal = compression_work(s.mass, s.working, s.temp, s.pressure, step)
+            released = max(0.0, -ideal) * ETA_TURBINE
+            s.temp -= released / (s.mass * C_P_WATER)
+            led.heat_to_ocean += released
+            s.working = min(MAX_WORKING_FRACTION,
+                            s.working * WORKING_NUCLEATION)
+        before = s.flow_energy(led.reference_pressure)
+        s.pressure = step
+        _book_flow(s, before, led)
+
+
+# How much of a collapsing cavity's energy leaves as sound. A collapse is
+# broadband and violent -- it is the pistol shrimp, and SUBMERGED 4.1 already
+# uses the same effect as a logic gate -- so a quarter radiated is a
+# conservative reading of an event that is mostly noise.
+COLLAPSE_RADIATED = 0.25
+
+# How much of the slug's gas the collapse leaves behind as a cloud.
+COLLAPSE_SHED = 0.45
+
+
+def _collapse(s, amb, led):
+    """The cavity implodes, and ambient pressure is what drives it.
+
+    No compression heating here, deliberately. Once the water has torn there
+    is no working fluid left to compress adiabatically -- the cavity is
+    vapour, and its collapse is a mechanical event rather than a thermodynamic
+    one. Treating it as a compression was what produced the absurd +143 degC
+    charge.
+
+    The energy comes from the ocean, because it is the ocean's own pressure
+    doing the collapsing, and a quarter of it leaves as the bang.
+    """
+    before = s.flow_energy(led.reference_pressure)
+    s.pressure = max(s.pressure, amb.pressure)
+    gained = s.flow_energy(led.reference_pressure) - before
+    if gained <= 0.0:
+        return
+    bang = gained * COLLAPSE_RADIATED
+    s.note_amp += bang
+
+    # A collapse does not tidily re-dissolve. It shatters into a cloud of
+    # microbubbles that persists long after the pressure has recovered, which
+    # is what a cavitating propeller's wake looks like and why the charge
+    # leaves cover behind it.
+    #
+    # This was missed at first because the collapse restored ambient pressure
+    # and the gas went quietly back into solution, so the loudest thing in the
+    # vocabulary left no trace in the water at all.
+    shed = s.gas * COLLAPSE_SHED
+    led.bubbles_shed += s.mass * shed
+    s.gas -= shed
+    if s.note <= 0.0:
+        # A collapse is broadband. The ladder's top rung is the honest stand-in
+        # for "everything at once" until the front propagator takes a spectrum.
+        s.note = NOTES["chirp"]
+    led.heat_from_ocean += gained + bang
 
 
 def _book_flow(s, before, led):
@@ -460,6 +588,51 @@ def _book_flow(s, before, led):
         led.work_in += delta
     else:
         led.work_out += -delta
+
+
+def add_heat(s, q, led):
+    """Put q joules of heat into the slug -- melting any ice first.
+
+    The exact inverse of `freeze_clamp`, and it has to exist or the pair is
+    not a pair. Without it the cold side was capped at freezing while the warm
+    side still charged full price, and the asymmetry produced output that
+    swung +78.91, -9.98, +16.56 degC as EXPANDs were added ONE AT A TIME.
+
+    That is precisely the unlearnable non-monotonicity RIGS.md 2.1 condemns:
+    a player adding one module cannot be shown a result that lurches. Melting
+    before warming makes freeze and thaw cancel exactly, and the sequence goes
+    monotone.
+    """
+    if q <= 0.0:
+        s.temp += q / (s.mass * C_P_WATER)
+        return
+    if led.latent > 0.0:
+        melt = min(led.latent, q)
+        led.latent -= melt
+        q -= melt
+    s.temp += q / (s.mass * C_P_WATER)
+
+
+def freeze_clamp(s, led):
+    """Water cannot be cooled below freezing; it turns to ice instead.
+
+    Called by the chain after every module rather than inside the ones that
+    cool, so there is exactly one place the floor lives and no module can
+    forget it. The energy that would have gone into lowering the temperature
+    goes into the phase change, which is where a real refrigerator's cold side
+    stops too.
+    """
+    if s is None or s.temp >= FREEZE_TEMP:
+        return
+    led.latent += (FREEZE_TEMP - s.temp) * s.mass * C_P_WATER
+    s.temp = FREEZE_TEMP
+
+
+def frozen_fraction(s, led) -> float:
+    """How much of the slug has turned to ice. 1.0 means the pipe is blocked."""
+    if s is None or s.mass <= 0.0:
+        return 0.0
+    return led.latent / (s.mass * LATENT_HEAT_FUSION)
 
 
 def _gas_events(s):
