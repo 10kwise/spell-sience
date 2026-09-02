@@ -295,6 +295,7 @@ class Front:
         lv = self._voronoi_lengths()
         total = float(lv.sum())
         self.arc_span = total
+        self._D0 = u.copy()
         self.launch_intensity = energy / total if total > _EPS else 0.0
         if total > _EPS:
             self._E[:] = energy * (lv / total)
@@ -391,6 +392,33 @@ class Front:
             k = (j + 1) % n
             out.append((P[j], P[k], 0.5 * float(inten[j] + inten[k])))
         return out
+
+    def place(self, origin, direction) -> "Front":
+        """Move and turn a whole front, rigidly, after birth.
+
+        A front is built in the frame of the mouth that made it, and the
+        mouth is on a bench 375x smaller than the room (7.4a). Rather than
+        birth it twice, it is built once and then carried into the world --
+        translated so its centroid sits at `origin` and rotated so its
+        reference heading points along `direction`. Rigid, so span, curvature
+        and every per-vertex energy come through untouched: only where it is
+        and which way it faces change.
+        """
+        d = np.asarray(direction, dtype=np.float64).reshape(2)
+        n = float(np.hypot(d[0], d[1]))
+        if not np.isfinite(n) or n < _EPS or self._dead:
+            return self
+        d = d / n
+        ang = math.atan2(d[1], d[0]) - math.atan2(self._D0[1], self._D0[0])
+        ca, sa = math.cos(ang), math.sin(ang)
+        R = np.array(((ca, -sa), (sa, ca)))
+
+        centre = self._P.mean(axis=0)
+        self._P[:] = (self._P - centre) @ R.T + np.asarray(origin, dtype=np.float64)
+        self._D[:] = self._D @ R.T
+        self._D0 = d.copy()
+        self._invalidate()
+        return self
 
     def is_dead(self) -> bool:
         return self._dead

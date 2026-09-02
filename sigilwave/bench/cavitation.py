@@ -66,6 +66,14 @@ HOLD_STEPS = 24
 # the threshold chatters the gate open and shut every step.
 RELEASE_RATIO = 0.45
 
+# After a cavity collapses the water there cannot immediately be torn open
+# again -- it has to recover. Without this the gate re-fires on the very next
+# step whenever the drive is still high, and the measured interval between
+# collapses ran from 1 step to 79 with no rate to read. With it, the firing
+# rate is set by the thing driving the gate rather than by the step size,
+# which is what makes a loop's own note legible as a trigger rate.
+REFRACTORY_STEPS = 10
+
 # What the collapse radiates, as a fraction of the drive that opened it.
 COLLAPSE_GAIN = 0.55
 
@@ -76,12 +84,14 @@ def blake_threshold(depth_m: float) -> float:
 
 
 class _Gate:
-    __slots__ = ("coupler", "closed_kappa", "open_until", "is_open", "fires")
+    __slots__ = ("coupler", "closed_kappa", "open_until", "ready_at",
+                 "is_open", "fires")
 
     def __init__(self, coupler):
         self.coupler = coupler
         self.closed_kappa = coupler.kappa
         self.open_until = 0
+        self.ready_at = 0
         self.is_open = False
         self.fires = 0
 
@@ -126,7 +136,7 @@ class Cavitation:
         for gate in self.gates:
             drive = self._drive(gate.coupler)
             if not gate.is_open:
-                if drive >= self.threshold:
+                if drive >= self.threshold and self.steps >= gate.ready_at:
                     gate.is_open = True
                     gate.open_until = self.steps + HOLD_STEPS
                     gate.fires += 1
@@ -137,6 +147,7 @@ class Cavitation:
                 held = self.steps < gate.open_until
                 if not held and drive < self.threshold * RELEASE_RATIO:
                     gate.is_open = False
+                    gate.ready_at = self.steps + REFRACTORY_STEPS
                     self._write_kappa(gate.coupler, gate.closed_kappa)
 
     def _collapse(self, coupler, drive: float) -> None:

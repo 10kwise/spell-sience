@@ -231,9 +231,19 @@ def test_fork_goes_both_ways() -> None:
 
     check("FORK: it goes both ways, evenly", close(amp[0], amp[1], tol=1e-12))
     check("FORK: nothing is created at the junction", close(sum(energy) + back * back, 1.0, tol=1e-12))
+    # 4's original sentence said "half as bright each" and was wrong. The
+    # corrected sentence -- "shares itself out between the ways on, and a
+    # little bounces back" -- is what is asserted now, so this check tests
+    # the design as written rather than as first guessed. See 4.0.
     check(
-        f"FORK: 'half as bright each' - section 4's own sentence, and each branch actually gets {energy[0]:.4f}",
-        close(energy[0], 0.5, tol=0.01),
+        f"FORK: it shares out between the ways on - {energy[0]:.4f} each of three,"
+        f" not the 0.5 the first draft claimed",
+        close(energy[0], 2.0 / 9.0 * 2.0, tol=0.01),
+    )
+    check(
+        f"FORK: and a little bounces back - {back * back:.4f} returns the way it came,"
+        f" which the first draft did not mention at all",
+        back * back > 0.05,
     )
     note("the sentence is true only for a 4-way junction, where 2/N is exactly 1/2:")
     for n in (3, 4, 5):
@@ -262,9 +272,13 @@ def test_gap_jumps_only_if_strong_enough() -> None:
 
     spread = max(ratios) / min(ratios)
     note(f"crossing fraction over six decades of drive: spread {spread:.6f}x (a gate would be thousands)")
+    # The bare coupler has no threshold and this check now asserts that,
+    # because it is the measured truth and the reason `cavitation.py` exists.
+    # The gate lives there, on top of this; `selftest_cavitation` proves it.
     check(
-        "GAP: it is a threshold - a weak pulse does not cross and a strong one does",
-        spread > 100.0,
+        "GAP: the bare coupler is linear - no threshold anywhere in six decades"
+        " (the gate is cavitation, see selftest_cavitation)",
+        spread < 1.01,
     )
 
     joined = _two_runs(4.0)
@@ -326,7 +340,11 @@ def test_gap_jumps_only_if_strong_enough() -> None:
         f"driving the loop {30.0 / 0.01:.0f}x harder changes the crossing fraction by"
         f" {ratios[1] / ratios[0]:.3f}x - saturation makes a gap harder to jump, not easier"
     )
-    check("GAP: driving harder makes more of it cross", ratios[1] > ratios[0] * 1.5)
+    check(
+        "GAP: and saturation cannot supply one - driving a loop harder makes"
+        " LESS cross, not more, so the gate could not have come from the sim",
+        ratios[1] < ratios[0],
+    )
 
 
 def test_mouth_is_the_only_part_that_touches_the_water() -> None:

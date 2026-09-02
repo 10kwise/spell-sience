@@ -134,34 +134,65 @@ def main():
           "a machine tuned at the station simply refuses to trip at depth")
 
     print("\n--- LOOP + GAP: the timer 6 struck out ---")
-    # A loop fed continuously charges; when the circulating amplitude passes
-    # the threshold the gate fires, dumps, and the loop charges again.
-    asm = Assembly()
-    asm.add_loop((400.0, 300.0), 50.9)                 # hum: 80-sample lap
-    asm.add_run((100.0, 300.0), (349.0, 300.0))        # feed, joined to the ring
-    asm.add_run((461.0, 300.0), (700.0, 300.0))        # pickup, gapped off it
-    net = asm.compile()
-    if net.couplers:
+    # A loop only charges if it is coupled WEAKLY. Joined to its feed it is
+    # an open port and the energy leaves the way it came; gapped, the same
+    # drive builds until it tears the water open, dumps, and builds again.
+    # That contrast is the lesson, so it is the check.
+    def _loop_rig(feed_gap):
+        asm = Assembly()
+        asm.add_loop((400.0, 300.0), 50.9)                    # hum: 80-sample lap
+        asm.add_run((100.0, 300.0), (349.1 - feed_gap, 300.0))
+        asm.add_run((461.0, 300.0), (700.0, 300.0))
+        return asm
+
+    results = {}
+    for feed_gap, label in ((0.0, "joined"), (10.0, "gapped")):
+        net = _loop_rig(feed_gap).compile()
         cav = Cavitation(net)
-        drive = 0.30 * BLAKE_SURFACE                   # far too weak alone
-        single, single_fires = _delivered(drive)
-        for i in range(3000):
+        peak = 0.0
+        for i in range(6000):
             cav.step()
-            net.step({0: drive})
-        note(f"a single {drive:.3f} pulse fires {single_fires} times;"
-             f" the same drive into a loop fires {cav.fired()}")
-        gaps_between = [b[0] - a[0] for a, b in zip(cav.collapses, cav.collapses[1:])]
-        if gaps_between:
-            mean = sum(gaps_between) / len(gaps_between)
-            spread = max(gaps_between) - min(gaps_between)
-            note(f"interval between collapses: mean {mean:.1f} steps,"
-                 f" spread {spread} (loop lap is 80)")
-        check(cav.fired() > 1,
-              "a loop charges past a threshold a single pulse cannot reach")
-        check(len(gaps_between) >= 2 and (max(gaps_between) - min(gaps_between)) <= mean,
-              "and it fires at a regular interval - that is a clock")
+            net.step({0: 0.10 * math.sin(2.0 * math.pi * i / 80.0)})
+            if i > 200:
+                peak = max(peak, max(
+                    abs(e.forward.peek(j))
+                    for e in net.edges.values()
+                    for j in range(0, e.length_samples, 5)))
+        results[label] = (peak, cav.fired(), cav.collapses)
+        note(f"feed {label}: peak in the wires {peak:.4f}"
+             f" (threshold {BLAKE_SURFACE:.2f}), gate fired {cav.fired()}")
+
+    joined_peak, joined_fires, _ = results["joined"]
+    gapped_peak, gapped_fires, collapses = results["gapped"]
+    check(joined_fires == 0,
+          "a loop JOINED to its feed never charges - the feed is an open port"
+          " and the energy leaves the way it came")
+    check(gapped_fires > 1 and gapped_peak > joined_peak * 5.0,
+          f"a loop GAPPED off its feed charges"
+          f" {gapped_peak / max(joined_peak, 1e-12):.0f}x higher and fires -"
+          f" weak coupling is what makes a resonator")
+    check(gapped_peak > BLAKE_SURFACE,
+          f"and past a threshold the drive alone cannot reach (drive 0.10,"
+          f" threshold {BLAKE_SURFACE:.2f}, reached {gapped_peak:.2f})")
+
+    gaps_between = [b[0] - a[0] for a, b in zip(collapses, collapses[1:])]
+    if gaps_between:
+        mean = sum(gaps_between) / len(gaps_between)
+        note(f"interval between collapses: mean {mean:.1f} steps,"
+             f" min {min(gaps_between)}, max {max(gaps_between)}")
+        # NOT claimed: that this is a metronome. It fires repeatedly, which
+        # makes it an oscillator and a usable trigger, but the interval is
+        # set by where the drive happens to cross the threshold rather than
+        # by the loop's own charge time, so the spread is wide and the rate
+        # is not monotone in loop size (measured: groan 66.9, hum 37.8, ping
+        # 54.8 steps). Turning a repeating trigger into a readable clock is
+        # an open problem, and asserting regularity here would only hide it.
+        check(len(gaps_between) >= 5,
+              f"it fires again and again - a repeating trigger, though not yet"
+              f" a metronome (interval spread {min(gaps_between)}-{max(gaps_between)})")
     else:
-        check(False, "LOOP + GAP: the test assembly produced no coupler")
+        check(False, "the gated loop never fired twice, so there is no interval")
+
 
     print(f"\n{_passed} passed, {_failed} failed.")
     return 1 if _failed else 0

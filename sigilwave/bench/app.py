@@ -29,6 +29,7 @@ from .parts import (
     Assembly,
     snap_radius,
 )
+from .cavitation import Cavitation
 from .pulse import pulse_samples_directed
 
 WIDTH, HEIGHT = 1200, 800
@@ -66,6 +67,8 @@ class Bench:
         self.drag_from = None
         self.drag_to = None
         self.history = []          # [[(x, y, amp, dir), ...], ...]
+        self.gate_state = []       # which gaps were torn open, per step
+        self.fires = 0
         self.energy = []           # (stored, radiated_cumulative)
         self.head = 0
         self.playing = False
@@ -111,6 +114,8 @@ class Bench:
     def clear_shot(self):
         self.history = []
         self.energy = []
+        self.gate_state = []
+        self.fires = 0
         self.head = 0
         self.playing = False
         self.fired_at = None
@@ -126,12 +131,16 @@ class Bench:
         node_id, at = min(mouths, key=lambda m: (m[1] - p).length_squared())
 
         net = self.asm.compile()
+        cav = Cavitation(net)
         burst = raised_cosine_burst(BURST_SAMPLES, amplitude=1.0)
         self.history = []
         self.energy = []
+        self.gate_state = []
         radiated = 0.0
         for i in range(RUN_STEPS):
             inj = {node_id: burst[i]} if i < len(burst) else None
+            cav.step()
+            self.gate_state.append(set(cav.open_gates))
             radiated += net.step(inj)
             self.history.append(
                 pulse_samples_directed(net, self.asm, max_points_per_edge=48,
@@ -140,6 +149,7 @@ class Bench:
         self.head = 0
         self.playing = True
         self.fired_at = at
+        self.fires = cav.fired()
         self.note = self.asm.describe()
 
     def advance(self):
@@ -165,9 +175,18 @@ def draw(screen, bench, font, small, mouse):
         if len(pts) > 1:
             pygame.draw.lines(screen, WIRE, part.kind == "loop", pts, 2)
 
-    for pos_a, pos_b, gap in asm.gaps():
+    open_now = (bench.gate_state[bench.head]
+                if bench.gate_state and bench.head < len(bench.gate_state)
+                else set())
+    for gi, (pos_a, pos_b, gap) in enumerate(asm.gaps()):
         a = (int(pos_a[0]), int(pos_a[1]))
         b = (int(pos_b[0]), int(pos_b[1]))
+        if gi in open_now:
+            # torn open: the water there has failed and it conducts
+            pygame.draw.line(screen, (255, 236, 190), a, b, 3)
+            pygame.draw.circle(screen, (255, 250, 225),
+                               ((a[0] + b[0]) // 2, (a[1] + b[1]) // 2), 7)
+            continue
         n = max(2, int((pygame.Vector2(b) - pygame.Vector2(a)).length() / 5))
         for i in range(n):
             if i % 2:
@@ -228,7 +247,8 @@ def _panel(screen, bench, font, small):
         stored, radiated = bench.energy[bench.head]
         info = (f"t={bench.head * SIM_DT:5.2f}s   step {bench.head}/"
                 f"{len(bench.history) - 1}   in the wires {stored:.4f}"
-                f"   left by mouths {radiated:.4f}")
+                f"   left by mouths {radiated:.4f}"
+                + (f"   gate tore open {bench.fires}x" if bench.fires else ""))
     else:
         info = "no shot recorded"
     screen.blit(small.render(info, True, TEXT), (bx, CANVAS_H + 50))
