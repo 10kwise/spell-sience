@@ -896,6 +896,30 @@ class Medium:
         ux = np.clip(ux * k, -MAX_ADVECT_COURANT, MAX_ADVECT_COURANT)
         vy = np.clip(vy * k, -MAX_ADVECT_COURANT, MAX_ADVECT_COURANT)
 
+        # The four outer faces are OPEN, not walls, and getting that wrong was
+        # a real bug rather than a nicety.
+        #
+        # `_neighbours` uses a zero-flux edge and that is right for diffusion:
+        # heat has nowhere else to go in a closed box, and the acoustic mirror
+        # depends on it being exact. Advection is different, because it has a
+        # direction. With no outflow, every channel carried toward a wall
+        # ARRIVES AND STAYS -- the boundary is a shelf that collects whatever
+        # the tide pushes at it -- so the edges of the domain slowly became the
+        # richest water in the ocean and the ecosystem moved onto them.
+        # Measured: 19 of 69 creatures pressed against the walls, and kills
+        # happening at the edges more often than at the seeps.
+        #
+        # This is a 1.2 km window onto an ocean (see OCEAN_RELAX, which is the
+        # same argument for heat). A smell carried out of the window is gone.
+        edge_u = np.clip(u[:, [0, -1]] * k, -MAX_ADVECT_COURANT,
+                         MAX_ADVECT_COURANT)
+        edge_v = np.clip(v[[0, -1], :] * k, -MAX_ADVECT_COURANT,
+                         MAX_ADVECT_COURANT)
+        out_left = np.minimum(edge_u[:, 0], 0.0)     # negative u leaves
+        out_right = np.maximum(edge_u[:, 1], 0.0)
+        out_top = np.minimum(edge_v[0, :], 0.0)      # +y is down
+        out_bottom = np.maximum(edge_v[1, :], 0.0)
+
         for field in self.channels.values():
             fx = np.where(ux > 0.0, field[:, :-1], field[:, 1:]) * ux
             fy = np.where(vy > 0.0, field[:-1, :], field[1:, :]) * vy
@@ -903,6 +927,12 @@ class Medium:
             field[:, 1:] += fx
             field[:-1, :] -= fy
             field[1:, :] += fy
+
+            field[:, 0] += out_left * field[:, 0]
+            field[:, -1] -= out_right * field[:, -1]
+            field[0, :] += out_top * field[0, :]
+            field[-1, :] -= out_bottom * field[-1, :]
+            np.maximum(field, 0.0, out=field)
 
     def _step_channels(self, dt: float) -> None:
         """Diffuse and decay every trophic channel. RIGS.md 13.4.

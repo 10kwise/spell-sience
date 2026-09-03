@@ -1127,15 +1127,39 @@ Four consequences, and not one of them is authored:
 3. **Depth is the multiplier, not the resource.** Colder surroundings mean a
    bigger ΔT and a better yield, so the sites order themselves by depth — and
    the rich ones are the ones furthest from the umbilical.
-4. **Working a site degrades it, and this is already implemented.**
-   `Thermopile.apply` takes `q` out of the water and `couple.py` writes the
-   consequence back into the medium. Extracting heat from a plume **cools the
-   plume**. So the near vents exhaust as you work them, and recover on
-   `_diffuse_heat`'s own timescale.
+4. ~~**Working a site degrades it.**~~ **This was wrong, and §13.8's second
+   test is what found it.** The reasoning was sound — `Thermopile.apply` does
+   take `q` out of the water and `couple.py` does write it back, so extracting
+   heat from a plume does cool the plume. What it missed is arithmetic: a vent
+   is a source with a *fixed rate*, and `Vent.heat_rate` puts in far more than
+   one hand-portable rig can take out. Measured over ten minutes of continuous
+   working:
 
-Point 4 is the answer to *why push further*, it costs nothing to build, and it
-is the good kind of answer: **the ledger pushes you outward, not a designer.**
-It has to be measured and tuned, not written.
+   | | |
+   |---|---|
+   | yield at t=0 | 0.0152 units/s |
+   | after 60 s | 0.0125 |
+   | after 600 s | **0.0125** |
+
+   An 18% dip in the first minute and then a flat line for nine more. **A vent
+   does not exhaust.** Anything built on the assumption that it would — the
+   whole "the near sites run down so you must go further" argument — has no
+   support.
+
+**What actually pushes you off a site is that it fills up.** Measured, holding
+station and running a heater for ten minutes against an identical control:
+
+| | rig off | rig running |
+|---|---|---|
+| stalkers within 260 px | 0 → 0 | 0 → **4 of 4** |
+| creatures within 260 px | 20 → 23 | 20 → **27** |
+
+So the pressure to move on is real and it is the one the systems already
+produce: **the yield does not fall, the risk rises.** That is better than
+depletion and not merely a substitute for it — a number going down is a thing
+you read off a gauge, whereas a site filling up with things that noticed you
+is a thing you watch happen. §9.1's "your rig's efficiency is also your
+camouflage" was already the same sentence from the other end.
 
 ### 13.4 The cycle: everything arrives, nothing hunts
 
@@ -1374,3 +1398,99 @@ So the real figure is about **1.4% of a core per channel** at 4.8 km, not 0.41%
 comfortably: a 4.8 km ocean with a full ecosystem in it runs in under a
 fifteenth of one core, and the decoupling from the frame rate is what pays for
 it.
+
+### 13.9b Predation is a collision
+
+Death began as starvation alone: a counter ran down and a body appeared
+wherever the creature happened to be standing. A playtester put the objection
+better than the design had — *it shouldn't be random or placed randomly, it
+should happen when predator and prey collide, at the general position they die
+there.* That is right, and the reason it is right is that **starvation has no
+position and predation does.**
+
+A hunter within 26 px of a grazer kills it. The body is at that spot, the chum
+plume starts at that spot, and everything that arrives afterwards is arriving
+at something a player watched happen.
+
+Note what did **not** become a collision. Grazers still eat `swarm` as a field,
+and that is not an inconsistency: grazing is a continuous nibble at a
+distributed biomass, and a field is the right model for it. One large animal
+catching one other large animal is a discrete event and needs a coordinate.
+**The split is between kinds of eating, not between kinds of code.**
+
+The hunter stopped eating the `shoal` marker and stopped emitting `chum`
+altogether — it navigates by `shoal` and lives on kills, and the body it
+leaves *is* the chum. Counting both would be paying twice for one death. So
+the food web now only closes through a corpse:
+
+> … grazer → hunter → **(kills it)** → carrion → chum → scavenger
+
+and `selftest_cycle` [1] walks that graph, including the predation edge, to
+prove it still comes back to where it started.
+
+| measured | |
+|---|---|
+| deaths in 900 s | **33 by predation**, 18 by starvation |
+| kills within 220 px of a seep | **32 of 33** |
+| kills at an edge | **1 of 33** |
+| a fed grazer's body vs a starving one | 110.0 vs 33.0 units |
+
+That third row is the whole point of the change. Death now happens where the
+ecosystem is.
+
+#### And one thing it did that nobody asked for
+
+Turning predation on made the food web **less** attached to the seeps —
+decomposers x1.24 → x0.98, drifters x1.45 → x1.16 on the same world. That is
+not a regression. A carcass falls where the kill was, its chum becomes
+nutrient there, and the decomposers follow the nutrient, so **death
+redistributes production away from the vents.** That is what a whale fall does
+in a real ocean, and it arrived out of nothing but "a kill is a collision".
+
+### 13.10 What playing it changed
+
+Nine sessions in front of the observatory produced more corrections than every
+suite in the repo, and the two that mattered most were invisible to all of
+them.
+
+| reported | it was |
+|---|---|
+| *"currents are growing stronger slowly over time"* | true. The medium had **no heat sink**: a station and a vent add 2.5e-3 °C/s and nothing removed it, so the water warmed forever and, because buoyancy is density-driven, peak flow climbed 6.7 → 8.8 px/s and kept going. `OCEAN_RELAX` is the ocean outside the window |
+| *"stalkers are stuck to the vent"* (×3) | three separate bugs in a row: a saturating clamp gave a gradient of **exactly zero** at any anomaly over 6 °C; then having no search behaviour left them motionless at a maximum; then satiation that muted the sense without giving them a direction. Fixed with `asinh`, a patrol, and a gain that runs **through zero to −1** |
+| *"the lamp explodes motion towards the top"* | every rig that touches water, not just the lamp. A `THERMAL_COUPLING`-amplified rig-second went into **one 16 m cell**, and the exhaust came out of the middle of the diver. Now a 3×3 kernel, out of the port |
+| *"death seems to occur exclusively at the edges"* | half true, and the fix is above |
+| *"the bodies sink uniformly"* | true, and they no longer do |
+| *"it's still tough to move through water"* | `CURRENT_COUPLING` — a diver is a compact body, not a 16 m parcel of ocean |
+| the window | opened at 1200×878 on an 805 px screen, putting **the entire HUD off-screen**. It measures the display now |
+
+**The generalisable lesson is about clamps.** Three separate bugs in this pass
+were the same bug: `min(6.0, v)`, `clamp(a, -6, 6)`, and a comfort response
+that saturated. A clamped region is **flat**, a flat region has no gradient,
+and a creature that reads gradients stops dead in one — *at exactly the place
+it most wanted to be*, because that is where the clamp binds. Every response
+curve in `creatures.py` is now unbounded and monotone: `(1 + v)^gain` for
+channels, `exp(gain · asinh(a))` for heat. **Nothing in a gradient system may
+have a ceiling.**
+
+**And the second lesson is about controls.** Four times in this pass a test
+went red because the *test* had stopped asking the right question — a control
+that still had predation running in it, a "uniform food" world that a moving
+ocean made patchy, an aggregation metric that assumed one centre, and a check
+that called the seabed "the edge of the world" when seven scavengers were
+correctly eating off the floor. Each was recorded rather than tuned away,
+because a threshold nudged to green is a measurement thrown out.
+
+### 13.11 Where §13 stands
+
+| | |
+|---|---|
+| 13.1 the survival economy | built — air and charge, and food is out |
+| 13.2 the umbilical | **not built** |
+| 13.3 yield is a place | built, and point 4 corrected above |
+| 13.4 the cycle | built. `selftest_cycle` **31/31** |
+| 13.5 what you look at | the observatory is built; the rig-as-instrument is not |
+| 13.6 two clocks | the tide is running; the scattering layer is not built |
+| 13.7 performance | measured, and holding |
+| 13.8 test 1, aggregation | **passed**, after five failures |
+| 13.8 test 2, vent exhaustion | **failed**, and the failure is the finding |
+| 13.8 test 3, diagnosis | still open, still the one a machine cannot answer |

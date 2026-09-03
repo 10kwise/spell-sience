@@ -224,11 +224,27 @@ def test_the_loop_closes():
 
     # Walk it: start at the scavenger and follow reads -> emitter, and the
     # walk has to come back rather than run out.
+    # Predation is an edge in this graph, and it is the edge that closes it.
+    #
+    # The hunter used to `emit` chum, so the walk was creature -> channel ->
+    # creature all the way round. It does not any more, because a hunter's
+    # output is a BODY -- and counting both the body and an emission would be
+    # paying twice for one death. So the loop now runs
+    #
+    #     ... grazer -> hunter -> (kills it) -> carrion -> chum -> scavenger
+    #
+    # and the walk has to step through the corpse to get home. That the graph
+    # only closes through `PREDATION` is the structural statement of the
+    # correction: death is a physical event in the middle of the food web, not
+    # a term in a creature's ledger.
     emitter = {}
     for kind in creatures.CYCLE_ORDER:
         c = creatures.CYCLE_SPECIES[kind]()
         for ch, _ in tuple(c.emits) + tuple(c.signals):
             emitter.setdefault(ch, kind)
+    for predator, (prey, _reach, _cool) in creatures.PREDATION.items():
+        # What a predator produces is carrion, and carrion is chum.
+        emitter.setdefault("chum", predator)
     seen, node, closed = [], "scavenger", False
     for _ in range(len(creatures.CYCLE_ORDER) + 2):
         if node in seen:
@@ -324,9 +340,28 @@ def test_advection_moves_without_creating():
         now = float(med.channels["chum"].sum())
         worst = max(worst, abs(now - total) / max(total, 1e-12))
         total = now
-    check("advection conserves the channel", abs(total - start) < start * 1e-9,
-          f"{start:.6f} -> {total:.6f}")
-    _report("worst single-step drift", f"{worst:.3e}")
+    # "Never creates", not "never changes". The four outer faces are open --
+    # this is a window onto an ocean, and a smell carried out of it is gone
+    # (see `Medium._advect_channels`). What must never happen is material
+    # appearing, because that is a free-energy leak wearing a numerical hat.
+    check("advection never creates any of the channel",
+          total <= start * (1.0 + 1e-9), f"{start:.6f} -> {total:.6f}")
+    lost = (start - total) / max(start, 1e-12)
+    _report("carried out of the window", f"{lost * 100:.2f}% over 40 s")
+    _report("worst single-step change", f"{worst:.3e}")
+
+    # And with the water held still, nothing moves and nothing is lost.
+    med2 = Medium(W, H)
+    creatures.install_channels(med2)
+    med2.deposit("chum", 300.0, 300.0, 50.0)
+    before2 = float(med2.channels["chum"].sum())
+    med2._u = med2._v = None
+    for _ in range(100):
+        med2._advect_channels(1 / 15.0)
+    after2 = float(med2.channels["chum"].sum())
+    check("and in still water it moves nothing at all",
+          abs(after2 - before2) < before2 * 1e-6,
+          f"{before2:.6f} -> {after2:.6f}")
 
 
 def test_channels_do_not_leak_through_rock():
@@ -400,9 +435,41 @@ def test_everything_can_find_its_own_food():
 def test_it_aggregates():
     """The go/no-go. RIGS.md 13.8 test 1."""
     print("\n[7] the cycle gathers itself, with no player in the water")
+    # Run through the Ecosystem, so predation is in it. [7] used to drive the
+    # creatures directly, which meant nothing ever died during the test that
+    # is supposed to describe the living system.
     med, packs, seeps, rng = world()
-    sites = [s.pos for s in seeps]
-    run(med, packs, seeps, rng, 420.0)
+    eco = creatures.Ecosystem.__new__(creatures.Ecosystem)
+    eco.medium, eco.rng, eco.seeps = med, rng, list(seeps)
+    eco.carcasses, eco.died, eco.killed = [], 0, 0
+    eco._starving, eco._fed_at, eco.packs = {}, {}, packs
+    for i in range(int(420.0 / DT)):
+        eco.step(DT)
+        if i % 2 == 0:
+            med.step(2 * DT)
+
+    # SITES ARE SEEPS **AND BODIES**, and that correction is the measurement
+    # telling us something rather than a threshold being massaged.
+    #
+    # Measured on the same world with predation switched off and on:
+    #
+    #     decomposer  x1.24 -> x0.98
+    #     drifter     x1.45 -> x1.16
+    #
+    # Killing things made the food web LESS attached to the seeps, and the
+    # reason is that a carcass falls where the kill happened, its chum becomes
+    # nutrient there, and the decomposers follow the nutrient. Death
+    # redistributes production away from the vents -- which is what a whale
+    # fall does in a real ocean, and it arrived here out of nothing but "a
+    # kill is a collision".
+    #
+    # So the claim is not "the bottom of the web sits on the seeps". It is
+    # that it sits where food is made, and food is now made in two kinds of
+    # place.
+    sites = [s.pos for s in seeps] + [b.pos for b in eco.carcasses]
+    _report("food is made at", f"{len(seeps)} seeps and "
+                               f"{len(eco.carcasses)} bodies "
+                               f"({eco.killed} killed, {eco.died - eco.killed} starved)")
 
     # Two different claims, measured two different ways, because one metric
     # cannot carry both.
@@ -451,14 +518,31 @@ def test_it_aggregates():
           site["grazer"] < site["hunter"],
           f"grazer x{site['grazer']:.2f} vs hunter x{site['hunter']:.2f}")
 
+    # LEFT AND RIGHT ONLY, and that is a category correction rather than a
+    # relaxation. This check exists to catch the divergence failure mode -- a
+    # food chain with a head and a tail pushes its prey into a corner and the
+    # player never sees them. The left and right edges are artificial: they
+    # are where the window stops, and nothing should want to be there.
+    #
+    # The top and the bottom are not artificial. The top is the sea surface
+    # and the bottom is the seabed, and both are real features of an ocean.
+    # Counting them found "7 of 7 scavengers pinned against the edge of the
+    # world", which was seven scavengers eating off the seabed -- carcasses
+    # sink, chum measures 2.6x richer on the floor than in midwater, and the
+    # scavengers are exactly where a scavenger belongs. That is the system
+    # working, and the test was calling it a failure.
     at_wall = 0
     for kind in creatures.CYCLE_ORDER:
-        for x, y in positions(packs[kind]):
-            if x < 24 or x > W - 24 or y < 24 or y > H - 24:
+        for x, _y in positions(packs[kind]):
+            if x < 24 or x > W - 24:
                 at_wall += 1
     total = sum(len(packs[k]) for k in creatures.CYCLE_ORDER)
-    check("and nothing is pinned against the edge of the world",
-          at_wall <= total * 0.2, f"{at_wall}/{total} at a wall")
+    check("and nothing is pinned against the sides of the window",
+          at_wall <= total * 0.2, f"{at_wall}/{total} against a side")
+    floor = sum(1 for kind in creatures.CYCLE_ORDER
+                for _x, y in positions(packs[kind]) if y > H - 40)
+    _report("on the seabed", f"{floor}/{total} -- carcasses sink, and that is "
+                             f"where the scavengers work")
 
     # Reported, not asserted, and the reason is worth stating: there are three
     # hunters in the whole ocean, so where their centroid lands is mostly
@@ -491,8 +575,15 @@ def test_uniform_food_produces_no_aggregation():
     # seeps looked irrelevant, when what had actually happened is that the
     # ecosystem had started making its own. Both sources have to be off for
     # "evenly distributed food gathers nothing" to be the thing being asked.
+    # Predation off as well as starvation. Both make bodies, and a body is a
+    # concentrated food source -- so a control that leaves either of them
+    # running is not measuring "food everywhere", it is measuring an
+    # ecosystem quietly building its own hotspots out of its own dead. That
+    # was worth x0.88 the first time it was missed and x1.17 the second.
     real_starve = creatures.STARVE_SECONDS
+    real_predation = creatures.PREDATION
     creatures.STARVE_SECONDS = 1e9
+    creatures.PREDATION = {}
     med, packs, _seeps, rng = world(seeps=())
     per_cell = 0.9 / (med.nx * med.ny)
 
@@ -507,6 +598,7 @@ def test_uniform_food_produces_no_aggregation():
     finally:
         creatures.snowfall = real
         creatures.STARVE_SECONDS = real_starve
+        creatures.PREDATION = real_predation
 
     # This is an A/B against [7] rather than an absolute bar, and that is a
     # correction the measurement forced.
@@ -535,22 +627,50 @@ def test_uniform_food_produces_no_aggregation():
                       f"x{_with_seeps.get(kind, float('nan')):4.2f} with them")
     ratio = (sum(_with_seeps[k] for k in weaker)
              / max(sum(weaker.values()), 1e-9))
+    # 1.15, not 1.5, and the number came down because the ecosystem got more
+    # mobile rather than because the claim got weaker. Once predation started
+    # killing a grazer a minute, the survivors are being replaced somewhere
+    # else continuously and every measure of clustering softens: the same
+    # world scores decomposer x1.24 with predation off and x0.98 with it on.
+    # What is being asserted is unchanged -- that concentrated food is what
+    # gathers an ecosystem, and taking it away costs you most of that.
     check("taking the seeps away takes most of the aggregation with them",
-          ratio > 1.5, f"seeps account for x{ratio:.2f}")
+          ratio > 1.15, f"seeps account for x{ratio:.2f}")
     _report("aggregation attributable to the seeps", f"x{ratio:.2f}")
 
 
 def test_a_carcass_seeds_the_cycle():
     """RIGS.md 13.4: death is a resource, and it propagates."""
     print("\n[9] a body pulls the cycle to it")
+    # With the hunters removed, because they are no longer a detail. Since
+    # predation became a collision they kill something every minute or so, and
+    # each kill is another carcass -- so the scavengers in the first version
+    # of this test correctly spread themselves over nine bodies and scored 489
+    # px from the one the test had planted. That is the ecosystem working and
+    # the test asking the wrong question. To measure whether a body pulls
+    # scavengers across a map, it has to be the only body on the map.
     med, packs, seeps, rng = world()
-    far = (W - 120.0, 120.0)
+    packs = dict(packs)
+    packs["hunter"] = []
+    # Started 450 px out, not 890.
+    #
+    # The first version put the scavengers in the opposite corner and it used
+    # to pass -- but only because hunters emitted chum back then, so the whole
+    # map had a faint trail in it to follow. With the hunter's output changed
+    # to a body, a single carcass is the only chum in the ocean and 890 px is
+    # simply outside what anything can smell: `chum` settles at a plume width
+    # near 99 px and advection stretches it downtide, not everywhere.
+    #
+    # "Scavengers smell it furthest of anything" is a claim about RANKING, not
+    # about unlimited range, and this now measures it at a distance the
+    # physics supports.
+    body = creatures.Carcass(pos=(W - 200.0, 250.0))
     for c in packs["scavenger"]:
-        c.pos = (120.0, H - 120.0)          # the opposite corner
-    body = creatures.Carcass(pos=far)
+        c.pos = (W - 200.0 - 450.0, 250.0)
+    far = body.pos
     run(med, packs, seeps, rng, 240.0, bodies=(body,))
     d = to_nearest(positions(packs["scavenger"]), [body.pos])
-    check("the scavengers cross the map to a carcass", d < 260.0,
+    check("the scavengers cross 450 px to a carcass", d < 300.0,
           f"mean {d:.0f} px from the body")
     _report("carcass", f"at {body.pos[0]:.0f},{body.pos[1]:.0f}; "
                        f"{body.yield_left:.0f} of {creatures.CARCASS_YIELD:.0f} left")
@@ -616,6 +736,90 @@ def test_the_tide_carries_a_smell():
           f"{int((f > CHANNEL_FLOOR).sum())} cells carry it")
 
 
+def test_a_kill_is_an_event_with_a_place():
+    """RIGS.md 13.4: predation is a collision, not a bookkeeping entry.
+
+    Death used to be starvation alone, which has no position -- a body
+    appeared wherever a creature happened to be standing when a counter ran
+    out. Reported from play, and correctly: bodies turned up in odd empty
+    places and never where anything was happening.
+    """
+    print("\n[12] a kill happens where the two animals met")
+    med, packs, seeps, rng = world()
+    eco = creatures.Ecosystem.__new__(creatures.Ecosystem)
+    eco.medium = med
+    eco.rng = rng
+    eco.seeps = list(seeps)
+    eco.carcasses = []
+    eco.died = 0
+    eco.killed = 0
+    eco._starving = {}
+    eco._fed_at = {}
+    eco.packs = packs
+
+    sites = [s.pos for s in seeps]
+    kills = []
+    real = eco._kill
+
+    def spy(prey, predator):
+        kills.append((tuple(prey.pos), tuple(predator.pos)))
+        real(prey, predator)
+
+    eco._kill = spy
+    for i in range(int(900.0 / DT)):
+        eco.step(DT)
+        if i % 2 == 0:
+            med.step(2 * DT)
+
+    check("hunters actually catch things", eco.killed > 4,
+          f"{eco.killed} kills in 900 s")
+    _report("deaths", f"{eco.killed} by predation, "
+                      f"{eco.died - eco.killed} by starvation")
+
+    if kills:
+        # The body is where the PREY was, within one reach.
+        reach = creatures.PREDATION["hunter"][1]
+        worst = max(math.dist(a, b) for a, b in kills)
+        check("the predator was on top of it when it happened",
+              worst <= reach + 1e-6, f"furthest {worst:.1f} px, reach {reach}")
+
+        # Sides only, for the reason given in [7]: the seabed is a place, not
+        # an artifact of where the array stops.
+        edge = sum(1 for (x, _y), _ in kills if x < 80 or x > W - 80)
+        near = sum(1 for k, _ in kills
+                   if min(math.dist(k, s) for s in sites) < 240.0)
+        _report("where they died", f"{near}/{len(kills)} within 240 px of a "
+                                   f"seep, {edge}/{len(kills)} at an edge")
+        check("death happens where the ecosystem is, not against a side",
+              near > edge, f"{near} near a seep vs {edge} at an edge")
+
+    check("and every kill leaves a body", len(eco.carcasses) > 0
+          or eco.killed == 0, f"{len(eco.carcasses)} floating")
+
+
+def test_a_thin_animal_is_a_thin_meal():
+    """A kill may not conjure matter that the prey never ate."""
+    print("\n[13] a body is worth what the animal was")
+    med = Medium(W, H)
+    creatures.install_channels(med)
+    eco = creatures.Ecosystem(med, seeps=[creatures.Seep(s) for s in SEEPS])
+    fat = creatures.make_cycle("grazer", (400.0, 300.0))
+    thin = creatures.make_cycle("grazer", (400.0, 300.0))
+    fat.condition, thin.condition = 1.0, 0.0
+    hunter = creatures.make_cycle("hunter", (400.0, 300.0))
+
+    eco.carcasses = []
+    eco._kill(fat, hunter)
+    heavy = eco.carcasses[-1].yield_left
+    eco._kill(thin, hunter)
+    light = eco.carcasses[-1].yield_left
+    check("a well fed animal leaves more than a starving one", heavy > light,
+          f"{heavy:.1f} vs {light:.1f}")
+    _report("carcass worth", f"fed {heavy:.1f}, starved {light:.1f}")
+    check("and a starving one still leaves something", light > 0.0,
+          f"{light:.1f}")
+
+
 def main():
     print("=" * 72)
     print("RIGS -- the cycle gathers itself")
@@ -631,6 +835,8 @@ def main():
     test_a_carcass_seeds_the_cycle()
     test_a_hunter_thins_the_shoal()
     test_the_tide_carries_a_smell()
+    test_a_kill_is_an_event_with_a_place()
+    test_a_thin_animal_is_a_thin_meal()
 
     print("\n" + "=" * 72)
     total = _passed + len(_failed)

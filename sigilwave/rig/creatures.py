@@ -750,6 +750,34 @@ class Seep:
 # scraps -- so with no player in the water the scavenger tier sat at condition
 # 0.000 in every configuration measured, however much food was poured in at
 # the bottom. A food web where nothing dies has no scavengers in it.
+# WHO CATCHES WHOM: predator -> (prey, how close it has to get in px, how
+# long before it can do it again in seconds).
+#
+# This is the correction that mattered most, and it came from play: death used
+# to be starvation alone, which is a bookkeeping event with no position. A
+# body appeared wherever a creature happened to have been standing when a
+# counter ran out, which is why carcasses turned up in odd empty places and
+# never where anything was happening.
+#
+# A kill is a COLLISION. Two animals occupy the same water and one of them
+# stops. The body is at that spot, the chum plume starts at that spot, and the
+# scavengers that arrive are arriving at something the player watched happen.
+#
+# Note what is NOT here. Grazers still eat `swarm` as a field, and that is not
+# an inconsistency: grazing is a continuous nibble at a distributed biomass and
+# a field is exactly the right model for it. One large animal catching one
+# other large animal is a discrete event and needs a coordinate. The split is
+# between kinds of eating, not between kinds of code.
+PREDATION = {
+    "hunter": ("grazer", 26.0, 60.0),
+}
+
+# What a caught animal is worth, as a fraction of a full carcass, scaled by
+# how well fed it was. A starving grazer is a thin meal and a thin body --
+# which keeps the books honest, because otherwise a kill would conjure a fixed
+# quantity of matter out of an animal that had eaten nothing.
+CARCASS_FROM_KILL = 0.55
+
 STARVE_SECONDS = 70.0
 CARCASS_OF_A_CREATURE = 0.35
 
@@ -819,10 +847,22 @@ class Ecosystem:
     """The cycle as a running thing: who is in the water, what feeds them,
     what dies, and what that death feeds.
 
-    Death is the part worth reading. A creature that cannot find food starves,
-    becomes a `Carcass`, and is replaced by a recruit from outside the window
-    -- the same argument as `field.OCEAN_RELAX`, which is that this domain is
-    a 1.2 km hole cut out of an ocean and things cross the edges of it. That
+    Death is the part worth reading, and it happens two ways.
+
+    **Predation is a collision.** A hunter that gets within reach of a grazer
+    kills it, and the body is at that spot -- see `PREDATION`. This is the one
+    that matters, because it is the only death a player can watch happen and
+    then follow the consequences of: the chum plume starts where the kill was,
+    the scavengers converge on it, and the whole lower web reorganises around
+    a thing that took one second.
+
+    **Starvation is the other**, and it is the quiet one: a creature that
+    cannot find food eventually stops. It is still a real death and still
+    leaves a body, but nobody sees it coming.
+
+    Either way the dead are replaced by a recruit from outside the window --
+    the same argument as `field.OCEAN_RELAX`, which is that this domain is a
+    1.2 km hole cut out of an ocean and things cross the edges of it. That
     keeps the population steady enough to watch while making the carrion node
     real, so the scavengers have something to be for.
     """
@@ -834,25 +874,37 @@ class Ecosystem:
         self.seeps = [s if isinstance(s, Seep) else Seep(s) for s in seeps]
         self.carcasses = []
         self.died = 0
+        self.killed = 0
         self._starving = {}
+        self._fed_at = {}
         counts = counts or dict(PYRAMID)
         self.packs = {k: [make_cycle(k, self._somewhere()) for _ in range(n)]
                       for k, n in counts.items()}
 
     def _somewhere(self):
-        return (float(self.rng.uniform(40, self.medium.width - 40)),
-                float(self.rng.uniform(40, self.medium.height - 40)))
+        return (float(self.rng.uniform(90, self.medium.width - 90)),
+                float(self.rng.uniform(90, self.medium.height - 90)))
 
     def _recruit_near(self):
         """Somewhere within reach of a source, rather than anywhere at all."""
         anchors = [s.pos for s in self.seeps] + [b.pos for b in self.carcasses]
         if not anchors:
             return self._somewhere()
-        ax, ay = anchors[int(self.rng.integers(len(anchors)))]
-        r = float(self.rng.uniform(120.0, 320.0))
-        th = float(self.rng.uniform(0.0, 6.283185))
-        return (min(max(ax + r * math.cos(th), 30.0), self.medium.width - 30.0),
-                min(max(ay + r * math.sin(th), 30.0), self.medium.height - 30.0))
+        # Kept well clear of the walls. Clamping to 30 px put recruits ON the
+        # edge, and carcasses are the worst offender because they sink -- so
+        # bodies pile up on the seabed, recruits anchor on the bodies, and
+        # 16 of 69 creatures ended up pressed against the bottom of the world.
+        # Rejection-sample a few times and fall back to open water.
+        margin = 90.0
+        w, h = self.medium.width, self.medium.height
+        for _ in range(8):
+            ax, ay = anchors[int(self.rng.integers(len(anchors)))]
+            r = float(self.rng.uniform(120.0, 320.0))
+            th = float(self.rng.uniform(0.0, 6.283185))
+            x, y = ax + r * math.cos(th), ay + r * math.sin(th)
+            if margin < x < w - margin and margin < y < h - margin:
+                return (x, y)
+        return self._somewhere()
 
     def all_creatures(self):
         for pack in self.packs.values():
@@ -871,6 +923,52 @@ class Ecosystem:
             for c in self.packs.get(kind, ()):
                 c.step(dt, self.medium, sounds)
                 self._reap(c, dt)
+        self._hunt(dt)
+
+    def _hunt(self, dt):
+        """Resolve predation, after everything has finished moving.
+
+        Deliberately last: a kill is decided on where the animals ended up
+        this tick, not on where they were when the loop happened to reach
+        them, so the outcome does not depend on iteration order.
+        """
+        for predator_kind, (prey_kind, reach, cooldown) in PREDATION.items():
+            prey_pack = self.packs.get(prey_kind)
+            if not prey_pack:
+                continue
+            for p in self.packs.get(predator_kind, ()):
+                key = id(p)
+                self._fed_at[key] = self._fed_at.get(key, 0.0) + dt
+                if self._fed_at[key] < cooldown:
+                    continue
+                px, py = p.pos
+                caught = None
+                best = reach * reach
+                for q in prey_pack:
+                    d2 = (q.pos[0] - px) ** 2 + (q.pos[1] - py) ** 2
+                    if d2 < best:
+                        best, caught = d2, q
+                if caught is None:
+                    continue
+                self._fed_at[key] = 0.0
+                self._kill(caught, p)
+
+    def _kill(self, prey, predator):
+        """One animal stops, at the place it stopped."""
+        self.died += 1
+        self.killed += 1
+        worth = CARCASS_YIELD * CARCASS_FROM_KILL * (0.3 + 0.7 * prey.condition)
+        self.carcasses.append(Carcass(
+            pos=(prey.pos[0], prey.pos[1]),
+            yield_left=worth,
+            rate=worth / CARCASS_SECONDS,
+            sink_speed=2.5 * float(self.rng.uniform(0.5, 2.0)),
+        ))
+        predator.condition = 1.0
+        self._starving.pop(id(prey), None)
+        prey.pos = self._recruit_near()
+        prey.vel = (0.0, 0.0)
+        prey.condition = 0.75
 
     def _reap(self, c, dt):
         key = id(c)
@@ -997,9 +1095,14 @@ def hunter(pos=(0.0, 0.0)) -> Creature:
         does="closes the cycle, and everything nearby knows it is there",
         temp_band=(1.0, 20.0), temp_softness=8.0,
         depth_band=(0.0, 760.0), depth_softness=320.0,
-        reads="shoal", read_gain=1.4, feed_rate=0.18,
-        condition_decay=0.028,
-        emits=(("chum", 0.35),),
+        # No `feed_rate`: a hunter does not eat the SIGNAL that grazers are
+        # nearby, it eats a grazer. `shoal` is what it navigates by and
+        # `PREDATION` is what it lives on, so its meals are events in the
+        # world rather than a slow withdrawal from a scalar field. It emits no
+        # chum either -- the body it leaves is the chum, and counting both
+        # would be paying twice for one death.
+        reads="shoal", read_gain=1.4,
+        condition_decay=0.006,
         signals=(("menace", 0.5),),
         pos=pos, speed=74.0,
     )
