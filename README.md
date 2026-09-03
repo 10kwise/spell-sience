@@ -86,6 +86,12 @@ python -m sigilwave.medium.selftest_front             fronts, refraction, the so
 python -m sigilwave.sim.selftest                  9   the waveguide (+7 more suites beside it)
 ```
 
+## Picking this up
+
+[`HANDOVER.md`](HANDOVER.md) is the orientation document: what is built, what
+is half-built, the six rules that must not be broken, and the traps that have
+already bitten.
+
 ## The design
 
 [`RIGS.md`](RIGS.md) is the document the code is written against, and code
