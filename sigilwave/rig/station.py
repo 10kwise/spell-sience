@@ -1,4 +1,4 @@
-"""Home. RIGS.md 13.
+"""Home. RIGS.md 12.8, 13.6.
 
 The station is the one thing in this world that gives instead of taking, and
 the design problem it poses is that a place which is simply *safe* is a menu

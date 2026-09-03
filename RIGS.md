@@ -1040,6 +1040,233 @@ clock.
 
 **175 checks**, against 80 when this pass started.
 
-Still missing before this is a game: the station, and a dive that can end.
-And the second go/no-go question in §12 is still open, because it is the one a
-machine cannot answer.
+The station is built (§12.8), and "a dive that can end" was dropped on purpose.
+What is still missing is the loop itself, which §13 designs — and the second
+go/no-go question of §12, which is still open because it is the one a machine
+cannot answer.
+
+---
+
+## 13. The loop
+
+Everything above is a world. A world answers *what happens if*. A game has to
+answer *what should I do*, and that is a different question that none of the
+four previous designs ever reached.
+
+The discipline is the one that produced everything good here: **the loop has to
+be read off the simulation rather than laid on top of it.** §12.8 threw out "a
+dive that can end" for exactly this reason. What follows adds two rules that
+are not physics — the umbilical and the bank — and everything else in it is a
+consequence of numbers already in the code.
+
+### 13.1 The survival economy is two numbers, and food is not one of them
+
+The test any meter has to pass: **does it create a decision the existing
+systems cannot, or is it a second clock ticking while you do the same things?**
+
+- **Air** is not a hunger bar, it is a *leash*. It says how far from home you
+  can be, it is spatial, and it interacts with depth honestly.
+- **Charge** is what machines eat, and §12.4's generators exist to take it back
+  out of the water.
+
+Both answer the same question — *how far out can I be* — from opposite ends,
+and that is a complete economy. Hunger and thirst answer a question nobody in
+this game is asking, and they pull it toward inventory management, which is the
+genre's most generic organ. Iron Lung has **zero** survival meters.
+
+**Food is in the world and not on the HUD.** §13.4 makes eating the thing that
+positions the ecosystem, so knowing what eats what and where is how you predict
+the ocean. You never eat. You read the things that do.
+
+### 13.2 The umbilical, because air should not teleport
+
+The station currently refills you by proximity, which is a menu with a radius.
+It should be a **rope**: a physical line from the station carrying air, paid out
+behind you.
+
+| | |
+|---|---|
+| **the rope is the meter** | its length is your range, it is visible in the world, and it needs no number on screen |
+| **it has drag, and the ocean has currents** | §12.7 gave the water a velocity. A long line in a tide pulls, and it pulls harder the more you pay out — so the leash fights you more the further you commit, and it fights *differently* depending on which way the tide is running |
+| **it fouls, and it can be cut** | terrain, and teeth |
+| **unclipping is the decision** | off the umbilical you are on bottles, and that is the moment the game changes |
+
+That last row is the whole point. The leash is not a restriction, it is the
+thing you choose to leave.
+
+### 13.3 Yield is a place, not a depth
+
+**This section is a correction, and the fault was real.** §9.1 says every good
+thing gets better with depth, and the first sketch of this loop left it there as
+the incentive to go deeper. It does not work, for a reason worth writing down:
+**depth is uniform along a row.** If yield is a function of depth alone then
+danger and reward are decoupled — you slide sideways along the isobath to
+whatever `x` happens to be quietest and collect the same prize. There is never
+a reason to push *through* anything.
+
+The physics already disagreed and nobody was listening. §12.4 measured that a
+thermopile in uniform water makes **exactly zero**, and that break-even needs a
+372 K difference. **Cold water is not a resource. A gradient is** — and a
+gradient is a *place*.
+
+| site | what it is | and therefore |
+|---|---|---|
+| **vent** | a hot point in cold water. The richest, and permanent | it drives a convection cell (§12.7) — a rising plume with a sinking return limb either side — so working one means holding station in water that is actively moving you |
+| **seep / brine** | cold, or chemically distinct | a different gradient, different neighbours, a different rig |
+| **front** | a moving sheet where two water masses meet (`medium/front.py`) | it **moves**, so a good site found once has to be found again, and navigation beats memorisation |
+
+Four consequences, and not one of them is authored:
+
+1. **A point cannot be dodged sideways.** Reward and risk are finally the same
+   coordinate.
+2. **The best site in the ocean is, by construction, the most attractive place
+   in it to the thing that hunts by heat.** `stalker.heat_hunter = 2.2` and its
+   comfort is `exp(2.2 × anomaly)` — it climbs *exactly* the quantity that makes
+   a vent worth standing on. `lantern.temp_band = (2, 8)` makes the same vent a
+   wall. One number each, and no spawn table anywhere.
+3. **Depth is the multiplier, not the resource.** Colder surroundings mean a
+   bigger ΔT and a better yield, so the sites order themselves by depth — and
+   the rich ones are the ones furthest from the umbilical.
+4. **Working a site degrades it, and this is already implemented.**
+   `Thermopile.apply` takes `q` out of the water and `couple.py` writes the
+   consequence back into the medium. Extracting heat from a plume **cools the
+   plume**. So the near vents exhaust as you work them, and recover on
+   `_diffuse_heat`'s own timescale.
+
+Point 4 is the answer to *why push further*, it costs nothing to build, and it
+is the good kind of answer: **the ledger pushes you outward, not a designer.**
+It has to be measured and tuned, not written.
+
+### 13.4 The cycle: everything arrives, nothing hunts
+
+The obvious ecosystem — predators seek prey, prey flee predators — is a
+**chain**, and a chain has a head attracted to something that only runs and a
+tail attracted to nothing. Chains diverge. Prey end up against the map edge,
+predators follow, and the player never sees either.
+
+A **closed loop of attraction** has no head and no tail:
+
+> carrion → scavengers → decomposers → filter feeders → prey → predators → carrion
+
+Three rules make it work:
+
+1. **Every link attracts, and the loop closes.** Nobody hunts; everybody
+   *arrives*. Predation becomes a consequence of aggregation rather than of
+   pursuit, which is how a bait ball actually forms.
+2. **Avoidance exists, but only at short range.** Drawn toward the aggregation
+   from 400 px, fleeing a predator within 40. Long-range attraction with
+   short-range repulsion is the classic flocking rule, and it produces a dense
+   knot with panic churning inside it.
+3. **It is carried by fields, not by creatures perceiving creatures.** A carcass
+   writes `chum` into the medium; it diffuses and decays exactly as heat already
+   does. Scavengers read `chum`, their feeding leaves `nutrient`, filter feeders
+   read that, and so on round.
+
+Rule 3 is non-negotiable, because it keeps §9's one rule intact — creatures
+still read only fields — and it buys two things free: the range laws of §9.0,
+and **an instrument that can read the cycle**. A rig that senses chum is a
+hunting tool. The ecosystem becomes something the vocabulary can reach.
+
+And it makes **death a resource that propagates**. A kill is not an enemy
+removed, it is a dinner bell that stays rung for minutes — so you can *seed* the
+cycle, dropping a carcass to pull the whole ecosystem somewhere else and clear
+the water where you actually mean to work.
+
+### 13.5 What you actually look at
+
+**A correction: sonar is a sense, not a renderer.** An earlier draft made it the
+primary display, which is wrong — nobody wants to watch a line waving for an
+hour, and Iron Lung works precisely because its sonar is a *still image you take
+occasionally*. The camera stays close to the diver. Four layers, and none of
+them is a live sweep:
+
+| range | what it is | and the cost of using it |
+|---|---|---|
+| **near** | your eyes, and a lamp. Rendered water, where nearly all playtime is | light is safety and exposure on one switch — the Darkwood generator, and `heat_hunter` is already the term a light-hunter would use |
+| **readings** | **the rig itself, raised into frame** | it occupies your hands and your view. You cannot see past the thing you are reading — informed and vulnerable become the same action |
+| **continuous** | sound. A hydrophone that clicks faster near chum | zero screen space, maximum dread. The station already hums at `STATION_NOTE = 117.0`, and `Station.bearing_from` already exists as "the answer that instrument would give" |
+| **far** | a sonar **still** — one frozen, low-information frame you study, and that fades | expensive, deliberate, four times a dive. And §9.0 measured that a groan pulls a shoalfish 260 px, so looking is being found |
+
+The load-bearing idea is in row two: **the instrument face is
+`Chain.describe()`.** What your rig is built out of decides what it can tell
+you — a thermopile gives you a needle for ΔT, a chum sense gives you a bearing.
+**Your interface is a thing you engineered**, which puts navigation, engineering
+and whatever the lore turns out to be on a single upgrade path.
+
+### 13.6 Two clocks, and the rule that makes them matter
+
+There is no day at 600 m, and a day/night cycle would be a clock painted on top
+of the simulation. But the *structure* of Darkwood's night — a rhythm you can
+see coming, that changes the verb, that you choose how to meet, and that
+punishes cutting it fine — is reproducible from what is already running:
+
+| | | built? |
+|---|---|---|
+| **the tide** decides when travel is cheap, and which way | `TIDE_PERIOD_S = 240`, sheared by `DRIFT_DECAY_M` so the shallows carry you and the deep does not | already running |
+| **the scattering layer** decides where the ocean is full | a `depth_band` that breathes on a cycle. Real: the diel migration, the largest on Earth, found by wartime sonar as a false bottom that moved | one term |
+| **home is night** | the bench *is* the barricade phase — build rigs, and listen | already there |
+
+And the one rule that turns all of it into a bet:
+
+> **The pack banks only when you dock.**
+
+Charge generated at depth rides in the field pack and enters the station's
+reserve at the door, or not at all. That single rule is what makes *one more
+minute* a decision, and it is the only part of Darkwood's night worth copying.
+
+Because the station **consumes** — light, pump, heat — home is a drain rather
+than a safe room, and every dive has a quota. The loop closes:
+
+| | already built |
+|---|---|
+| the station burns charge, so you must dive | `Station`, `Economy.charge` |
+| charge needs a gradient, and gradients are sites (§13.3) | §12.4, `Thermopile` |
+| generating means running a rig, which is hot and loud | `couple.py` writes it into the water |
+| heat and noise call the cycle, so the water gets busy where you work | `heat_hunter`, §9.0's range laws |
+| the swim home is priced by the tide | `TIDE_PERIOD_S` |
+| **and none of it counts until you dock** | one rule |
+
+The greed moment writes itself: *the pack is at 32 of 40, the station needs 35,
+you have been generating on this vent for four minutes, and the tide turns in
+forty seconds.* One design requirement follows — **greed must be informed.** The
+pack filling and the water getting busy have to be legible at the same time, or
+the bet is a coin flip.
+
+### 13.7 Performance, measured rather than feared
+
+`METRES_PER_PIXEL = 1.0` and the ocean bottoms out at **792 m**, so depth is
+capped by design and cell count grows in one dimension only. Measured, with the
+medium stepped at 15 Hz:
+
+| ocean | cells | field + flow | cost |
+|---|---|---|---|
+| 1.2 km × 800 m | 3,750 | 0.55 ms | 0.8% of a core |
+| 4.8 km × 800 m | 15,000 | 3.02 ms | 4.5% |
+| 9.6 km × 800 m | 30,000 | 5.06 ms | 7.6% |
+| **19.2 km × 800 m** | 60,000 | 9.51 ms | **14.3%** |
+
+Creatures cost **0.016 ms each** — a hundred of them is 1.6 ms a frame. And
+§13.4's extra channels are nearly free: one more diffusing scalar is **0.274
+ms**, or **0.41% of a core** at 15 Hz, so six of them stay under 3%.
+
+**One decision falls out of this: the medium is not stepped at the frame rate.**
+At 15 Hz a 4.8 km ocean costs 4.5% of a core; at 60 Hz the same ocean costs 18%
+and recomputes `flow_field` four times for a field that has not meaningfully
+changed. Nothing in `_diffuse_heat` moves in 16 ms. The decoupling is
+physically right and it is worth a factor of four.
+
+The concern was reasonable, and the answer is that a **nineteen-kilometre**
+ocean runs in a seventh of one core. Performance is not what will kill this.
+
+### 13.8 What could, and the tests that are allowed to say so
+
+In the discipline of §12 — cheap, headless, and permitted to fail:
+
+1. **Does the cycle aggregate on its own, or does it smear?** Run §13.4 with no
+   player for ten minutes and measure clustering. If a closed attraction loop
+   does not form a travelling knot, everything above it is decoration.
+2. **Does a worked vent exhaust on a timescale that moves anybody?** §13.3's
+   point 4 is the entire reason to go further, and it is currently a prediction
+   about `Thermopile` and `_diffuse_heat` rather than a measurement.
+3. **Diagnosis**, still open from §12, and still the one a machine cannot
+   answer.
