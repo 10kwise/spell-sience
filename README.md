@@ -47,7 +47,7 @@ Two consequences worth stating up front:
 | | |
 |---|---|
 | `sigilwave/rig/` | the rig: five numbers, thirteen modules, a list, a ledger, the bench |
-| `sigilwave/medium/` | the ocean: heat, gas, bubbles, sound speed, **and now a velocity** |
+| `sigilwave/medium/` | the ocean: heat, gas, bubbles, sound speed, a velocity, **and what the currents carry** |
 | `sigilwave/sim/` | the digital waveguide the sound runs on, unchanged from its original spec |
 | `sigilwave/diver.py` | a body in water: drag against the water, added mass, trim |
 | `sigilwave/sources.py` | where energy comes from, and the pack that stores it |
@@ -71,6 +71,7 @@ python -m sigilwave.rig.selftest_station         18   home is a place, not a men
 python -m sigilwave.rig.selftest_selfpower       15   nothing powers itself, incl. through the ocean
 python -m sigilwave.rig.selftest_couple          25   where the rig meets the real water
 python -m sigilwave.rig.selftest_creatures       20   one rule, four species
+python -m sigilwave.rig.selftest_cycle           24   does the ecosystem gather itself
 python -m sigilwave.rig.selftest_density          9   the go/no-go: is the vocabulary dense enough
 python -m sigilwave.selftest_swim                28   is this water, or air with the numbers down
 python -m sigilwave.selftest_diver               10
@@ -95,7 +96,9 @@ the two games before that. Their code is gone; the arguments that produced
 
 ## Not built yet
 
-The game loop. That is deliberate — the station exists, movement exists, the
+The game loop. The ecosystem underneath it is built and green — six channels
+carried on the current, a closed food web that gathers itself at the places
+food comes from, and no way for it to run on itself. That is deliberate — the station exists, movement exists, the
 water moves, and the last open question is the one a machine cannot answer:
 hand somebody `the cooler` with the `COIL` pulled out, let them watch the slug
 cross it, and ask why it does nothing.

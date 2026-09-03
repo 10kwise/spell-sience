@@ -59,6 +59,54 @@ PROBE = 16.0
 DRAG = 0.02
 MAX_SPEED = 90.0
 
+# How hard a creature casts about when the water tells it nothing, as a
+# fraction of its own speed.
+#
+# Without this a creature in a flat field FREEZES: `step` only accelerates when
+# the comfort gradient is non-zero, and drag takes the rest of its velocity
+# within a second or so. That is the same failure `_band`'s softness was
+# written to avoid, arriving through a different door -- and it is fatal to the
+# cycle, because a channel under CHANNEL_FLOOR is exactly zero, so anything
+# more than a plume's width from food would simply stop and wait to die.
+#
+# The gradient is normalised before this is added, so a real signal of any
+# strength at all still dominates: 0.35 deflects a committed creature by about
+# nineteen degrees and completely determines one that has nothing to go on.
+# Only creatures that forage do this -- see the gate in `step`.
+WANDER = 0.35
+
+# How fast condition falls when a creature is not eating, per second, and how
+# much one unit of food restores.
+#
+# CONDITION EXISTS TO CLOSE A FREE-ENERGY LEAK, and `selftest_cycle` found it
+# rather than reasoning. Presence channels (`swarm`, `shoal`) are written by
+# `signals` whether or not the creature ate, which is right -- a shoal is
+# findable because it is there. But the hunter EATS `shoal` and turns it into
+# `chum`, which is a substance, so an unconditional signal was a doorway from
+# nothing into the substance chain: with no snow and no seeps at all, total
+# channel mass rose from 60 to 722 units in five minutes. A food web that runs
+# on itself is RIGS.md 12.5's perpetual motion machine wearing fins.
+#
+# Gating the signal on condition closes it: a creature only advertises while it
+# is fed, and being fed traces back through the whole chain to snow and death.
+# It also buys the behaviour 13.3 wanted from the other direction -- work a
+# place hard enough and it goes quiet, because the things living there thin out
+# rather than because a designer put a timer on it.
+CONDITION_DECAY = 0.08
+CONDITION_GAIN = 1.2
+
+# And the signal rates themselves are held BELOW the feed rate of the creature
+# emitting them (0.05 against 0.12 for a drifter, 0.07 against 0.16 for a
+# grazer). Gating a signal on condition is not enough on its own: condition is
+# a stock, so a trickle of food holds it at 1.0 and the creature advertises at
+# full rate forever. Measured, the first version turned 0.006 units/s of intake
+# into 0.30 units/s of signal, and `selftest_cycle` [2] caught it as 60 units
+# of channel becoming 722 with nothing feeding the world at all.
+#
+# `menace` is exempt and deliberately louder, because nothing eats it. A
+# channel that is never consumed cannot leak into the substance chain, so it
+# is free to be as loud as the behaviour needs.
+
 
 def _band(value, low, high, softness):
     """1.0 inside the band, falling off smoothly outside it.
@@ -108,9 +156,79 @@ class Creature:
     # ocean, and it is still just a term in the same sum.
     heat_hunter: float = 0.0
 
+    # --- the trophic cycle (RIGS.md 13.4) -----------------------------------
+    #
+    # `reads` is what this creature is drawn to and `emits` is what it leaves
+    # behind, and the food web is nothing but those two strings lining up
+    # around a circle: the scavenger reads what the dead leave and emits what
+    # the decomposer reads, and so on until the hunter emits chum again
+    # because a kill is what starts the cycle over.
+    #
+    # This is a CYCLE and not a chain on purpose. A chain -- predators seek
+    # prey, prey flee predators -- has a head attracted to something that only
+    # runs and a tail attracted to nothing, so it diverges: the prey end up
+    # against the map edge and the player never sees either of them. A closed
+    # loop of attraction has no head and no tail.
+    reads: str | None = None
+    read_gain: float = 0.0
+
+    # How much of `reads` this creature takes out of the water per second.
+    # Eating is not decoration here: it is the only thing preventing the
+    # aggregation from collapsing onto one cell, because it flattens the peak
+    # that drew the crowd in. See `Medium.consume`.
+    feed_rate: float = 0.0
+
+    # ((channel, units emitted per unit EATEN), ...). Emission is driven by
+    # intake rather than produced from nothing, so the cycle is a transfer and
+    # a creature that finds no food leaves no trail. A tuple because the
+    # hunter writes two -- the scraps that feed the scavengers, and the fact
+    # of itself.
+    #
+    # These sum to less than 1 on every species, so the loop LOSES around its
+    # circuit and cannot run on itself. That is not a balance decision, it is
+    # the same law as RIGS.md 12.5: the cycle needs an external input, which
+    # is carcasses plus `snowfall`, exactly as a real one needs the surface.
+    emits: tuple = ()
+
+    # The other half of the flocking rule. `reads` is a wide slow channel and
+    # says "the shoal is somewhere that way" from across a room; `flees` is a
+    # tight fast-decaying one and says "it is right here". Long-range
+    # attraction with short-range repulsion is what makes a dense knot with
+    # panic churning inside it rather than either a smear or a single point.
+    flees: str | None = None
+    flee_gain: float = 0.0
+
+    # ((channel, units per second), ...) written whether or not it ate.
+    #
+    # The distinction between this and `emits` is SUBSTANCE versus PRESENCE,
+    # and getting it wrong is what made the hunters fail to aggregate. `chum`,
+    # `nutrient` and `bloom` are things -- they are produced by working on
+    # something else, so they belong in `emits` and they attenuate down the
+    # pyramid the way real trophic transfer does. `swarm` and `shoal` are not
+    # things, they are the fact that there are drifters or grazers here, and a
+    # shoal is findable because it exists rather than because it has been
+    # feeding. Routed through `emits` they inherited four levels of trophic
+    # loss, arrived at the top at a fifth of the strength anything could read,
+    # and the hunters ended up MORE dispersed than random placement.
+    signals: tuple = ()
+
     pos: tuple = (0.0, 0.0)
     vel: tuple = (0.0, 0.0)
     speed: float = 40.0
+    last_meal: float = 0.0
+    wander_phase: float = 0.0
+
+    # 1.0 is well fed, 0.0 is starving. Only creatures that eat have it mean
+    # anything; RIGS.md 9's four species leave it at 1.0 forever, which keeps
+    # their behaviour exactly as `selftest_creatures` measured it.
+    condition: float = 1.0
+
+    def __post_init__(self):
+        # Seeded from where it starts, so a shoal does not cast about in
+        # unison, and so a run is reproducible without an RNG anywhere in
+        # this module.
+        if self.wander_phase == 0.0:
+            self.wander_phase = (self.pos[0] * 0.7 + self.pos[1] * 1.3) % 6.283185
 
     # --- the one rule -------------------------------------------------------
 
@@ -152,6 +270,27 @@ class Creature:
         if self.heat_hunter:
             a = self._anomaly(medium, row, col)
             c *= math.exp(self.heat_hunter * max(-6.0, min(6.0, a)))
+
+        # The cycle uses a POWER law rather than the exponential above, and
+        # that difference was measured rather than chosen.
+        #
+        # `exp(gain * min(6, v))` was the first version, by analogy with the
+        # two terms above. It collapsed the entire ecosystem onto a single
+        # point -- every species at a radius of gyration under 2 px, all five
+        # sharing one centroid. The reason is the clamp: channels reach 10.3
+        # where the creatures pile up, so the response saturates, and a
+        # saturated region is FLAT. That is the same failure the comment above
+        # describes for a clamped linear term, arriving from the other side,
+        # and it takes the repulsion out with it -- a grazer sitting in
+        # saturated `menace` cannot tell which way is away from the hunter.
+        #
+        # (1 + v)**gain is 1.0 at zero, monotone forever, never flat, and
+        # cannot overflow at any value a channel can reach. No clamp, so no
+        # flat spot, so the gradient survives everywhere.
+        if self.reads:
+            c *= (1.0 + medium.channel_at(self.reads, x, y)) ** self.read_gain
+        if self.flees:
+            c *= (1.0 + medium.channel_at(self.flees, x, y)) ** -self.flee_gain
 
         for sx, sy, freq, loudness in sounds:
             d = math.hypot(x - sx, y - sy)
@@ -199,6 +338,23 @@ class Creature:
             vx += (gx / n) * self.speed * dt * 4.0
             vy += (gy / n) * self.speed * dt * 4.0
 
+        # Cast about, but only if this creature forages. A slow turn rather
+        # than a jitter, because an animal searching sweeps and a random walk
+        # vibrates.
+        #
+        # The gate on `reads` is the whole point and it was put there by a
+        # failing test. RIGS.md 9's four species are defined by what the
+        # PLAYER does to the water, and `selftest_creatures` requires that
+        # they do not move when their comfort is flat -- otherwise "the heater
+        # moved it" stops being an attributable claim and every measurement in
+        # that suite is contaminated. Searching belongs to foraging, which is
+        # 13.4's cycle, so a creature that eats searches and a creature that
+        # only prefers does not.
+        if self.reads:
+            self.wander_phase += dt * 0.6
+            vx += math.cos(self.wander_phase) * self.speed * dt * 4.0 * WANDER
+            vy += math.sin(self.wander_phase) * self.speed * dt * 4.0 * WANDER
+
         sp = math.hypot(vx, vy)
         if sp > 1e-9:
             drag = DRAG * sp
@@ -218,6 +374,32 @@ class Creature:
         self.pos = (nx, ny)
         self.vel = (vx, vy)
         self.last_comfort = here
+
+        # Eat, then leave what eating leaves, at the cell it actually ended up
+        # in -- so the trail records where it went rather than where it set
+        # off from, and a creature that found nothing leaves nothing.
+        #
+        # A standing constraint on adding species: nothing in the cycle may
+        # read the channel it emits. Self-attraction is a positive feedback
+        # with no opposing term, and a creature that can smell itself stops
+        # where it is and calls that comfort.
+        ate = 0.0
+        if self.reads and self.feed_rate > 0.0:
+            ate = medium.consume(self.reads, nx, ny, self.feed_rate * dt)
+        self.last_meal = ate
+
+        if self.feed_rate > 0.0:
+            self.condition = min(1.0, max(
+                0.0, self.condition - CONDITION_DECAY * dt + CONDITION_GAIN * ate))
+
+        for channel, yield_per in self.emits:
+            if yield_per > 0.0 and ate > 0.0:
+                medium.deposit(channel, nx, ny, yield_per * ate)
+        # Scaled by condition, so a starving shoal stops advertising. See
+        # CONDITION_DECAY: without this the cycle is a perpetual motion machine.
+        for channel, rate in self.signals:
+            if rate > 0.0 and self.condition > 0.0:
+                medium.deposit(channel, nx, ny, rate * self.condition * dt)
 
 
 # --- the species -------------------------------------------------------------
@@ -303,3 +485,322 @@ def make(kind, pos=(0.0, 0.0)) -> Creature:
 
 def describe(c: Creature) -> str:
     return f"{c.name}: wants {c.wants}; {c.does}."
+
+
+# --- the cycle ---------------------------------------------------------------
+#
+# RIGS.md 13.4. Six links, closing on themselves:
+#
+#     carrion -> scavenger -> decomposer -> drifter -> grazer -> hunter -> carrion
+#
+# Every link is ATTRACTION. Nobody in here hunts anything; everybody arrives,
+# and predation is a consequence of two species being drawn to the same place
+# by different things. That is how a bait ball actually forms, and it is the
+# only arrangement that does not diverge.
+#
+# The one avoidance term in the whole ecosystem is the grazer fleeing `menace`,
+# and it is deliberately short-ranged (see MENACE below): from across a room a
+# grazer is drawn to the aggregation, and inside it a grazer is trying to not
+# be the one that gets eaten.
+
+# Each channel is (diffusivity px^2/s, half-life s). Those two set the reach,
+# because a continuously fed decaying field settles at a length of about
+# sqrt(D / lambda) with lambda = ln2 / half_life. The comment on each line is
+# that number, and it is the only thing about a channel worth arguing over.
+CHANNELS = {
+    "chum":     ( 45.0, 150.0),   # ~99 px across. Carrion lingers
+    "nutrient": ( 35.0, 150.0),   # ~88 px: what the scavengers leave
+    "bloom":    ( 30.0, 300.0),   # ~115 px, slowest. A bloom is a place
+    "swarm":    ( 45.0, 110.0),   # ~85 px, a presence: made to be found
+    "shoal":    ( 55.0,  90.0),   # ~85 px, a presence
+    "menace":   (100.0,  12.0),   # ~41 px. See below
+}
+
+# THE NUMBER IN THE COMMENT IS THE PLUME WIDTH, NOT THE RANGE, and getting
+# those two confused cost two measured runs.
+#
+# Diffusion sets how wide a plume is across the flow. It does NOT set how far
+# away a thing can be smelled, because what actually carries a channel is
+# `Medium._advect_channels` -- the current. Every one of these is at or below
+# HEAT_DIFFUSIVITY (60), which RIGS.md 9.0 measured as reaching 140 px, because
+# a channel smoother than heat has no gradient to climb anywhere: the mass is
+# real but so thin that (1 + v)**gain sits at 1.001 and the ocean's own
+# temperature structure decides everything. That was the second failed run.
+#
+# The first failed run had them tighter still, which is defensible as molecular
+# diffusion and useless as a game: nothing could find anything. The resolution
+# is that neither number was the problem. In water a smell is carried, not
+# spread, and once it is carried the tide decides who can smell what -- which
+# is the coupling 13.6 wanted and did not have to be written.
+
+# MENACE is the short-range half of the flocking rule and its reach is the
+# number that decides whether this looks like life. At 40 px it is about two
+# and a half cells: a grazer inside the knot is uncomfortable and a grazer at
+# the edge of it is not, so the shoal churns and thins around a hunter instead
+# of either ignoring it or evaporating. Widen it and the grazers scatter and
+# the cycle breaks; narrow it and nothing reacts to being hunted.
+
+# Marine snow: the external input the cycle cannot run without.
+#
+# Every species passes on less than it eats, so the loop loses about 96% of
+# whatever goes round it once. That is deliberate and it is the same law as
+# RIGS.md 12.5 -- nothing powers itself, ecosystems included. A real one is
+# driven by the surface, and this is that: aggregate falling out of the light
+# and feeding the dark.
+#
+# It falls as SPECKS rather than as a uniform drizzle, and that detail is
+# load-bearing. A uniform field has no gradient anywhere, so a decomposer in
+# one has nothing to climb and the bottom of the food web goes blind. Snow is
+# actually particulate; making it particulate here is both truer and the only
+# version that works.
+# THE BALANCE RULE, which four measured runs arrived at from four directions:
+#
+#     supply into a channel must not exceed what its eaters can take out.
+#
+# Overfeed a channel and it stops being patchy -- the stock builds until the
+# whole ocean is above the level that matters, (1 + v)**gain is large
+# everywhere, and there is nowhere better to be, which is the same "no
+# aggregation" symptom as having no food at all. Underfeed it and the level
+# below starves. Total supply here is about 1.45 units/s of nutrient against a
+# decomposer capacity of 1.5, and every level below is deliberately a little
+# hungry, because a food-limited predator is one that has to go where the food
+# is. That is what makes a hunter follow a shoal without any code for hunting.
+SNOW_SPECKS_PER_MEGAPIXEL = 0.45  # per second
+SNOW_SPECK = 4.0                  # units of nutrient in one
+
+# Those two numbers were balanced against the feed rates below rather than
+# chosen, and the first attempt at both was wrong in opposite directions.
+# Fifty creatures eating at 1 unit/s against a world fed 1.4 units/s strips
+# every channel to about 0.001, where (1 + v)**gain is 1.001 and the cycle
+# is invisible underneath the temperature and depth bands. The budget has to
+# close: supply, standing stock and grazing pressure are one number each and
+# they are only meaningful against each other.
+
+
+def snowfall(medium, dt: float, rng) -> int:
+    """Rain nutrient onto random cells. Returns how many specks landed."""
+    area = (medium.width * medium.height) / 1.0e6
+    expected = SNOW_SPECKS_PER_MEGAPIXEL * area * dt
+    n = int(rng.poisson(expected)) if expected > 0.0 else 0
+    for _ in range(n):
+        x = float(rng.uniform(0.0, medium.width))
+        y = float(rng.uniform(0.0, medium.height))
+        medium.deposit("nutrient", x, y, SNOW_SPECK)
+    return n
+
+
+class Seep:
+    """A place that makes food out of nothing but chemistry. RIGS.md 13.3.
+
+    THIS CLASS IS THE ANSWER TO WHY ANYTHING CLUSTERS, and it was added
+    because measuring said it had to be. With the cycle fed only by snow
+    falling at uniform random over the whole ocean, nothing aggregated at
+    all -- three separate tunings, and the radius of gyration never went
+    below its random starting value. The reason is embarrassingly simple in
+    hindsight: **uniformly distributed food cannot produce an aggregation.**
+    There is nowhere better to be.
+
+    So the base of the food web is a PLACE, which is the same correction
+    13.3 had to make to the player's economy, arriving independently from
+    the ecosystem's side. And it is what a real one does: a vent community
+    is chemosynthetic, built on the chemistry of the water coming out of the
+    ground rather than on light, which is why the richest thing in the deep
+    ocean is a hole in the floor.
+
+    The consequence is the one the whole design has been circling. The best
+    generator site (13.3), the most attractive place to a heat-hunter, and
+    the base of the food web are the same coordinate -- and nobody had to
+    make that true, it is three systems reading the same hole.
+    """
+
+    def __init__(self, pos, rate: float = 0.35, channel: str = "nutrient"):
+        self.pos = (float(pos[0]), float(pos[1]))
+        self.rate = float(rate)
+        self.channel = channel
+
+    def step(self, dt: float, medium) -> None:
+        medium.deposit(self.channel, self.pos[0], self.pos[1], self.rate * dt)
+
+
+CARCASS_YIELD = 200.0    # total units of chum a body is worth
+CARCASS_SECONDS = 300.0  # over which it gives them up, and then it is gone
+
+# 0.67 units/s from a single cell, against a whole world receiving about 6
+# from the snow. Locally a body outweighs everything else by a wide margin,
+# which is what makes death an event rather than a contribution.
+
+
+def install_channels(medium) -> None:
+    """Declare the cycle's channels on a medium. Idempotent.
+
+    A medium with no ecosystem in it costs nothing at all, so this is opt-in
+    rather than something `Medium.__init__` does -- `selftest_field` and the
+    rig suites should not have to know the food web exists.
+    """
+    for name, (diffusivity, half_life) in CHANNELS.items():
+        medium.add_channel(name, diffusivity, half_life)
+
+
+@dataclass
+class Carcass:
+    """A dead thing, which is the only source the cycle has.
+
+    It is not a creature and it has no comfort: it sinks and it gives off
+    chum. RIGS.md 13.4's claim that "death is a resource that propagates"
+    is this class plus the fact that a hunter also emits chum -- the cycle
+    is fed continuously by predation and in pulses by whatever dies.
+    """
+
+    pos: tuple = (0.0, 0.0)
+    yield_left: float = CARCASS_YIELD
+    rate: float = CARCASS_YIELD / CARCASS_SECONDS
+
+    # A body is denser than water and it goes down. This is the mechanism by
+    # which the shallows feed the deep, and it means a kill made up top is a
+    # gift to something you will meet later.
+    sink_speed: float = 9.0
+
+    @property
+    def spent(self) -> bool:
+        return self.yield_left <= 0.0
+
+    def step(self, dt: float, medium) -> None:
+        if self.spent:
+            return
+        x, y = self.pos
+        y = min(y + self.sink_speed * dt, medium.height - 2.0)
+        if medium.is_solid(x, y):
+            y = self.pos[1]
+        self.pos = (x, y)
+
+        give = min(self.yield_left, self.rate * dt)
+        self.yield_left -= give
+        medium.deposit("chum", x, y, give)
+
+
+def scavenger(pos=(0.0, 0.0)) -> Creature:
+    """Comes to the dead, from further away than anything else can. So it is
+    the first thing that arrives anywhere, and watching where the scavengers
+    are going is how you learn something died."""
+    return Creature(
+        name="scavenger",
+        wants="carrion, and it can smell it across a room",
+        does="arrives first, and leads everything else in",
+        temp_band=(1.0, 22.0), temp_softness=9.0,
+        depth_band=(0.0, 790.0), depth_softness=300.0,
+        reads="chum", read_gain=1.6, feed_rate=0.18,
+        emits=(("nutrient", 0.55),),
+        pos=pos, speed=62.0,
+    )
+
+
+def decomposer(pos=(0.0, 0.0)) -> Creature:
+    """Works over what the scavengers left. Slow, and it stays after they have
+    gone -- so a place that has been busy stays productive long after the thing
+    that made it busy is finished."""
+    return Creature(
+        name="decomposer",
+        wants="what the scavengers leave behind",
+        does="stays long after the crowd has moved on",
+        temp_band=(1.0, 16.0), temp_softness=7.0,
+        depth_band=(120.0, 790.0), depth_softness=260.0,
+        reads="nutrient", read_gain=1.4, feed_rate=0.15,
+        emits=(("bloom", 0.60),),
+        pos=pos, speed=26.0,
+    )
+
+
+def drifter(pos=(0.0, 0.0)) -> Creature:
+    """A filter feeder in the bloom. Barely swims, and it is the slowest thing
+    in the cycle -- which is what makes the bloom a place rather than an
+    event, and gives the grazers somewhere to be."""
+    return Creature(
+        name="drifter",
+        wants="the bloom, and it is in no hurry",
+        does="turns a slow chemical patch into somewhere worth eating",
+        temp_band=(2.0, 18.0), temp_softness=8.0,
+        depth_band=(40.0, 640.0), depth_softness=280.0,
+        bubble_response=0.6,
+        reads="bloom", read_gain=1.3, feed_rate=0.12,
+        signals=(("swarm", 0.05),),
+        pos=pos, speed=18.0,
+    )
+
+
+def grazer(pos=(0.0, 0.0)) -> Creature:
+    """Eats the drifters, and is the only thing in the cycle that is afraid.
+    Drawn to the swarm from across a room and repelled by a hunter within
+    forty pixels, which is the whole flocking rule and the reason the
+    aggregation churns instead of either dispersing or collapsing."""
+    return Creature(
+        name="grazer",
+        wants="the swarm, and it does not want to be eaten",
+        does="balls up around the food and thins where a hunter is",
+        temp_band=(2.0, 20.0), temp_softness=7.0,
+        depth_band=(0.0, 700.0), depth_softness=260.0,
+        reads="swarm", read_gain=1.5, feed_rate=0.16,
+        flees="menace", flee_gain=2.0,
+        signals=(("shoal", 0.07),),
+        pos=pos, speed=68.0,
+    )
+
+
+def hunter(pos=(0.0, 0.0)) -> Creature:
+    """Comes to the shoal, and closes the loop by feeding on it -- the scraps
+    are chum, which is what the scavengers came for in the first place. It
+    also announces itself, because a thing this size cannot not."""
+    return Creature(
+        name="hunter",
+        wants="the shoal",
+        does="closes the cycle, and everything nearby knows it is there",
+        temp_band=(1.0, 20.0), temp_softness=8.0,
+        depth_band=(0.0, 760.0), depth_softness=320.0,
+        reads="shoal", read_gain=1.4, feed_rate=0.18,
+        emits=(("chum", 0.35),),
+        signals=(("menace", 0.5),),
+        pos=pos, speed=74.0,
+    )
+
+
+CYCLE_SPECIES = {
+    "scavenger": scavenger,
+    "decomposer": decomposer,
+    "drifter": drifter,
+    "grazer": grazer,
+    "hunter": hunter,
+}
+
+# The order is the loop, and reading it top to bottom is reading the food web.
+CYCLE_ORDER = ("scavenger", "decomposer", "drifter", "grazer", "hunter")
+
+SPECIES.update(CYCLE_SPECIES)
+
+
+def make_cycle(kind, pos=(0.0, 0.0)) -> Creature:
+    return CYCLE_SPECIES[kind](pos)
+
+
+def cycle_table() -> str:
+    """The food web as it actually is in the data, rather than as documented.
+
+    Written to be printed, because the one thing that must never drift is the
+    claim that this is a closed loop: if a `reads` stops matching somebody
+    else's `emits`, this prints a chain and the chain has a visible end.
+    """
+    rows = ["snowfall       ->  nutrient",
+            "carrion        ->  chum"]
+    carried = 1.0
+    for kind in CYCLE_ORDER:
+        c = CYCLE_SPECIES[kind]()
+        out = ", ".join(f"{ch} x{y:.2f}" for ch, y in c.emits)
+        sig = ", ".join(f"{ch} (presence)" for ch, _ in c.signals)
+        out = "  ".join(x for x in (out, sig) if x) or "-"
+        flee = f"  flees {c.flees}" if c.flees else ""
+        if c.emits:
+            carried *= sum(y for _, y in c.emits)
+        rows.append(f"{c.name:<14} {c.reads:<9} ->  {out}{flee}")
+    rows.append("")
+    rows.append(f"substance carried once round the loop: {carried * 100:.1f}% of what "
+                f"it started with,")
+    rows.append("so the cycle cannot run on itself and needs snow and death.")
+    return "\n".join(rows)

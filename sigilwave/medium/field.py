@@ -120,6 +120,27 @@ PRESSURE_PER_METRE = 0.1   # bar
 HEAT_DIFFUSIVITY = 60.0     # px^2/s: a heated patch smears about one cell per second
 MAX_DIFFUSION_ALPHA = 0.24  # the explicit 5-point stencil is unstable past 0.25
 
+# --- trophic channels (RIGS.md 13.4) ----------------------------------------
+# The ecosystem cycle is carried by diffusing scalars rather than by creatures
+# perceiving one another, and that choice is the whole reason RIGS.md 9's one
+# rule survives contact with a food web: a creature still reads only fields.
+#
+# It also buys the range laws for free. 9.0 measured that heat's usable
+# gradient is gone by 140 px at HEAT_DIFFUSIVITY = 60, so a channel's
+# diffusivity IS its reach, and a channel's half-life is how long a place
+# stays interesting after whatever made it interesting has left. Those two
+# numbers per channel are the entire tuning surface.
+#
+# The floor exists so a channel that nothing is feeding actually reaches zero
+# rather than leaving a vanishing gradient for a creature to climb forever.
+CHANNEL_FLOOR = 1e-7
+
+# Upwind advection is stable to a Courant number of 1. The fastest water the
+# medium can make is a few px/s against a 16 px cell, so the real number is
+# about 0.03 and this clamp never binds -- it is a guard rail against a future
+# faster current, not a correction to this one.
+MAX_ADVECT_COURANT = 0.5
+
 # --- buoyancy ---------------------------------------------------------------
 # An unstable vertical pair (heavy sitting on light) swaps a fraction of its
 # contents. The fraction is proportional to how badly it is inverted, so
@@ -302,6 +323,12 @@ class Medium:
         self.bubbles = np.zeros(shape)
         self.bubble_radius = np.zeros(shape)
         self.solid = np.zeros(shape, dtype=bool)
+
+        # Trophic channels (RIGS.md 13.4). Empty by default: a medium with no
+        # ecosystem in it costs exactly nothing, and `selftest_field` should
+        # not have to know this exists.
+        self.channels: dict[str, np.ndarray] = {}
+        self._channel_rates: dict[str, tuple[float, float]] = {}
 
         self._nucleation_radius = NUCLEATION_RADIUS * self.pressure ** (-1.0 / 3.0)
         # Boyle: a bubble carries a fixed amount of gas, so r ~ P^(-1/3), and a
@@ -658,6 +685,61 @@ class Medium:
         self.temp[row, col] += float(amount)
         self._dirty = True
 
+    def add_channel(self, name: str, diffusivity: float, half_life: float) -> None:
+        """Declare a trophic channel. RIGS.md 13.4.
+
+        Two numbers, and they are the channel's whole character: diffusivity
+        is how far it can be smelled, half-life is how long a place stays
+        worth visiting. A wide slow channel says "the shoal is somewhere that
+        way" from across a room; a tight fast one says "it is right here".
+        One creature reading the first positively and the second negatively is
+        long-range attraction with short-range repulsion, which is the entire
+        difference between an aggregation and a smear.
+
+        Idempotent, so a caller can declare the same world twice without
+        wiping what is in it.
+        """
+        if name in self.channels:
+            return
+        self.channels[name] = np.zeros((self.ny, self.nx))
+        self._channel_rates[name] = (float(diffusivity), float(half_life))
+
+    def deposit(self, name: str, x: float, y: float, amount: float) -> None:
+        """Leave something behind. One cell, for `add_heat`'s reason."""
+        field = self.channels.get(name)
+        if field is None or amount <= 0.0:
+            return
+        row, col = self._cell(x, y)
+        if self.solid[row, col]:
+            return
+        field[row, col] += float(amount)
+
+    def consume(self, name: str, x: float, y: float, amount: float) -> float:
+        """Eat. Returns what was actually there to be eaten.
+
+        This is what stops an aggregation collapsing to a point. Attraction
+        alone is monotone toward the peak, so every arrival climbs to the same
+        cell and stays; letting the arrivals EAT flattens the peak they came
+        for, which spreads the crowd out and makes the whole knot travel. It
+        is also what makes RIGS.md 13.4's cycle a transfer of something rather
+        than five independent sources agreeing to be near each other.
+        """
+        field = self.channels.get(name)
+        if field is None or amount <= 0.0:
+            return 0.0
+        row, col = self._cell(x, y)
+        taken = min(float(field[row, col]), float(amount))
+        if taken <= 0.0:
+            return 0.0
+        field[row, col] -= taken
+        return taken
+
+    def channel_at(self, name: str, x: float, y: float) -> float:
+        field = self.channels.get(name)
+        if field is None:
+            return 0.0
+        return self._bilinear(field, x, y)
+
     def add_bubbles(self, x: float, y: float, amount: float, radius: float) -> None:
         row, col = self._cell(x, y)
         if self.solid[row, col] or amount <= 0.0:
@@ -708,6 +790,8 @@ class Medium:
             return
         self.elapsed += dt
         self._diffuse_heat(dt)
+        self._advect_channels(dt)
+        self._step_channels(dt)
         self._buoyancy(dt)
         self._shed_gas(dt)
         self._rise_bubbles(dt)
@@ -737,6 +821,78 @@ class Medium:
         up, down, left, right = self._neighbours(self.temp)
         laplacian = up + down + left + right - 4.0 * self.temp
         self.temp += np.where(self.solid, 0.0, alpha * laplacian)
+
+    def _advect_channels(self, dt: float) -> None:
+        """Carry every channel on the current. RIGS.md 13.4, 13.6.
+
+        This is the difference between an ecosystem that can be found and one
+        that cannot. Diffusion alone gave a detection range of about 200 px --
+        past that the field is under CHANNEL_FLOOR, the gradient is exactly
+        zero, and a creature more than a couple of rooms from food freezes in
+        place, which in a 1200x800 ocean is nearly everywhere. Measured: a
+        decomposer 300 px from a fed patch never arrived.
+
+        Advection fixes it the way the real ocean does. A scent is not spread
+        by spreading, it is spread by being carried, so a source streams a long
+        thin plume downtide -- findable from far away along the flow and sharp
+        across it. Which means the tide of 13.6 decides what you can smell and
+        from where, and approaching a thing from downstream is a different
+        proposition from approaching it from upstream. Nobody has to write that
+        down; it is one flux term.
+
+        Conservative upwind, in flux form, so this moves the channel around
+        without creating or destroying any of it -- the same discipline as
+        `_neighbours`, and for the same reason. The CFL number here is about
+        0.03 at the fastest water the medium can produce, so the scheme is
+        nowhere near its stability limit and the clamp below never binds.
+        """
+        if not self.channels:
+            return
+        u, v = self.flow_field
+
+        # Face velocities, with a zero-flux wall at every solid boundary.
+        ux = 0.5 * (u[:, :-1] + u[:, 1:])
+        vy = 0.5 * (v[:-1, :] + v[1:, :])
+        ux = np.where(self.solid[:, :-1] | self.solid[:, 1:], 0.0, ux)
+        vy = np.where(self.solid[:-1, :] | self.solid[1:, :], 0.0, vy)
+
+        k = dt / self.cell_size
+        ux = np.clip(ux * k, -MAX_ADVECT_COURANT, MAX_ADVECT_COURANT)
+        vy = np.clip(vy * k, -MAX_ADVECT_COURANT, MAX_ADVECT_COURANT)
+
+        for field in self.channels.values():
+            fx = np.where(ux > 0.0, field[:, :-1], field[:, 1:]) * ux
+            fy = np.where(vy > 0.0, field[:-1, :], field[1:, :]) * vy
+            field[:, :-1] -= fx
+            field[:, 1:] += fx
+            field[:-1, :] -= fy
+            field[1:, :] += fy
+
+    def _step_channels(self, dt: float) -> None:
+        """Diffuse and decay every trophic channel. RIGS.md 13.4.
+
+        Identical stencil to `_diffuse_heat`, and deliberately so: it inherits
+        the zero-flux boundary from `_neighbours`, which means a channel does
+        not leak through walls and does not leak out of the domain. A scent
+        that seeps through rock would let a creature climb toward something it
+        cannot reach, and a creature stuck against a wall reading a gradient
+        that never resolves is the exact failure mode 9's `_band` softness was
+        written to avoid.
+
+        Decay is exponential and framerate-independent. A channel steps at the
+        medium's rate, not the renderer's (13.7), so this has to be correct for
+        any dt rather than tuned for one.
+        """
+        for name, field in self.channels.items():
+            diffusivity, half_life = self._channel_rates[name]
+            alpha = min(diffusivity * dt / (self.cell_size**2), MAX_DIFFUSION_ALPHA)
+            up, down, left, right = self._neighbours(field)
+            laplacian = up + down + left + right - 4.0 * field
+            field += np.where(self.solid, 0.0, alpha * laplacian)
+            if half_life > 0.0:
+                field *= 0.5 ** (dt / half_life)
+            field[field < CHANNEL_FLOOR] = 0.0
+            field[self.solid] = 0.0
 
     def _buoyancy(self, dt: float) -> None:
         """Heavy sitting on light is unstable, so the pair partly swaps. Not a

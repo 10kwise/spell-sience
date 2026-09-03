@@ -1270,3 +1270,107 @@ In the discipline of §12 — cheap, headless, and permitted to fail:
    about `Thermopile` and `_diffuse_heat` rather than a measurement.
 3. **Diagnosis**, still open from §12, and still the one a machine cannot
    answer.
+
+### 13.9 Building the cycle, and the five ways it failed first
+
+§13.8's first test is built and green — `selftest_cycle`, **24/24**. It failed
+five times on the way, and every failure was a different wrong idea about the
+same system, so they are worth more than the working version.
+
+| | what happened | what it cost |
+|---|---|---|
+| **1. Total collapse** | comfort used `exp(gain · min(6, v))` by analogy with the bubble and heat terms. Channels reach 10 where creatures pile up, so the response **saturated**, and a saturated region is flat | every species at a radius of gyration under 2 px, all five on one centroid. Grazers could not tell which way was away from a hunter because `menace` was clamped too |
+| **2. Nothing to eat** | fifty creatures feeding at 1 unit/s against a world fed 1.4 | every channel stripped to ~0.001, where `(1+v)^gain` is 1.001 and the ocean's temperature structure decides everything |
+| **3. Nothing to smell** | fixing (2) by making channels tighter than heat | detection range ~200 px. Past it the field is under `CHANNEL_FLOOR`, the gradient is **exactly** zero, and a creature *freezes* — `step` only accelerates on a gradient and drag takes the rest |
+| **4. Nowhere better to be** | the cycle fed by snow falling at uniform random | nothing clustered, in three separate tunings |
+| **5. A signal that pays for nothing** | presence channels are written whether or not a creature ate — but a hunter *eats* `shoal` and turns it into `chum` | **60 units of channel became 722 with nothing feeding the world at all.** A food web running on itself, which is §12.5's perpetual motion machine with fins |
+
+Failure 1 replaced the exponential with **`(1 + v)^gain`** — 1.0 at zero,
+monotone forever, never flat, and it cannot overflow at any value a channel can
+reach, so there is no clamp and therefore no flat spot.
+
+Failure 3 is the one that changed the medium. **A smell in water is not spread,
+it is carried**, so `Medium._advect_channels` puts every channel on the
+current in conservative upwind flux form (measured drift over 600 steps:
+4.3e-16). Which means **the tide of §13.6 decides what you can smell and from
+where**, and approaching a thing from downstream is a different proposition
+from approaching it from upstream. That coupling did not have to be written; it
+is one flux term. A creature with nothing to read also had to start *searching*
+rather than stopping — `WANDER`, gated on foraging so §9's four species stay
+exactly as `selftest_creatures` measured them.
+
+Failure 4 is the important one, because it is §13.3 arriving from the other
+side. **Evenly distributed food cannot produce an aggregation** — there is
+nowhere better to be. The base of a food web has to be a *place*, so `Seep`
+exists: chemosynthesis, which is what a real vent community runs on. And now
+the thing this design has been circling is true by construction rather than by
+arrangement:
+
+> **The best generator site, the most attractive place in the ocean to a
+> heat-hunter, and the base of the food web are the same coordinate.**
+
+Nobody made that true. It is three systems reading the same hole.
+
+Failure 5 forced the distinction the model was missing. `chum`, `nutrient` and
+`bloom` are **substances** — produced by working on something else, so they
+attenuate down the pyramid the way trophic transfer does. `swarm` and `shoal`
+are **presence** — the fact that there are drifters or grazers here, findable
+because they exist. Routed through substance they arrived at the top at a fifth
+of readable strength and the hunters ended up *more dispersed than random*.
+Given away free, they were a doorway from nothing into the substance chain. The
+fix is `condition` — a creature only advertises while it is fed — plus holding
+every signal rate below the feed rate of whatever emits it. `menace` is exempt
+and louder, because **nothing eats it**, and a channel that is never consumed
+cannot leak.
+
+`condition` also buys §13.3's point 4 for the ecosystem: **work a place hard
+enough and it goes quiet**, because the things living there thin out, not
+because anybody set a timer.
+
+#### And one measurement mistake, which cost a whole tuning pass
+
+Clustering was first measured as a **radius of gyration** — spread about a
+single centre. With food at three seeps, perfect aggregation still reads as a
+large number, so a working ecosystem was scored as a failure and "fixed" twice.
+Everything is now a mean nearest-neighbour distance against a random-placement
+control, and nearest-neighbour is only read where n ≥ 6, because with four
+hunters in a 900×700 ocean it measures geometry rather than behaviour.
+
+#### What it does now
+
+| | measured against a random control |
+|---|---|
+| decomposers | **3.4× clumped**, 3.6× closer to a seep |
+| grazers | **3.5× clumped** |
+| hunters | 3.2× closer to a seep |
+| **grazers keep off the seeps the hunters sit on** | the long-range/short-range split of §13.4 at ecosystem scale |
+| a pinned hunter thins a shoal | **+176 px** of standoff, with no code for fleeing |
+| scavengers cross the map to a carcass | and a body **sinks** while they do it, so the shallows feed the deep |
+| a plume | **2.6× lopsided** along its row — the tide decides who smells it |
+| taking the seeps away | removes **x1.58** of the aggregation |
+
+That last row is the thinnest margin in the suite and it is honest about why:
+**uniform food is not achievable in water that moves.** The same mass added to
+every cell gets carried by the tide and piled up wherever the flow converges,
+so a perfectly even snowfall is a patchy field two minutes later and the
+decomposers gather on it at twice chance. Convergence zones concentrate food —
+which is why a front is worth anything in a real ocean — and it arrived out of
+a flux term written for a different reason entirely.
+
+#### One correction to §13.7
+
+That section predicted an extra diffusing channel at **0.41% of a core**, from
+measuring `_diffuse_heat` alone. Six real channels cost more than six times
+that, because advection is not free:
+
+| ocean | bare | with 6 channels | at 15 Hz |
+|---|---|---|---|
+| 1.2 km | 0.27 ms | 1.52 ms | 2.3% of a core |
+| 4.8 km | 1.05 ms | 4.50 ms | **6.8%** |
+| 9.6 km | 2.06 ms | 8.76 ms | 13.1% |
+
+So the real figure is about **1.4% of a core per channel** at 4.8 km, not 0.41%
+— three and a half times my estimate. The conclusion of §13.7 survives it
+comfortably: a 4.8 km ocean with a full ecosystem in it runs in under a
+fifteenth of one core, and the decoupling from the frame rate is what pays for
+it.
