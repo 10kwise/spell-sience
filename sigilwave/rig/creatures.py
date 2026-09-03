@@ -658,7 +658,13 @@ class Carcass:
     # A body is denser than water and it goes down. This is the mechanism by
     # which the shallows feed the deep, and it means a kill made up top is a
     # gift to something you will meet later.
-    sink_speed: float = 9.0
+    #
+    # 2.5 px/s, not 9: at 9 a carcass dropped in midwater is on the seabed
+    # inside ninety seconds, which is long before anything has arrived and
+    # means the plume is only ever seen lying on the floor. A body should take
+    # about five minutes to fall through the column it was killed in, so that
+    # the thing it attracts arrives while it is still falling.
+    sink_speed: float = 2.5
 
     @property
     def spent(self) -> bool:

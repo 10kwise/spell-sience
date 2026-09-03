@@ -4,8 +4,12 @@ An underwater survival game where the thing you build is a **pipe**.
 
 ```
 pip install -r requirements.txt
-python -m sigilwave.rig.bench
+python -m sigilwave.observatory
 ```
+
+Press **H** for the controls. Press **2**, then **T** a few times, and wait:
+the food web finds the three seeps on its own. Then press **SPACE** somewhere
+empty and press **1** to watch what a body does to the water.
 
 You place modules in a list, left to right. Water enters at one end and
 leaves at the other, and every module does one thing to it. There are no
@@ -55,6 +59,7 @@ Two consequences worth stating up front:
 ## Running it
 
 ```
+python -m sigilwave.observatory        THE OCEAN: swim in it, and watch the ecosystem run
 python -m sigilwave.rig.bench          the bench: build a rig, watch the slug cross it
 python -m sigilwave.rig.bench_shots    photograph the bench, headless
 python -m sigilwave.rig.swim_shots     photograph the water moving
