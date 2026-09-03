@@ -86,10 +86,12 @@ PRESETS = [
             "is carrying for more speed. Momentum leaving the port is thrust, "
             "honestly -- there is no THRUST_PER_ENERGY here, only mass times "
             "velocity.",
-        try_this="Add two more NARROWs. The nozzle pulls the pressure below what "
-                 "holds water together and the throat tears open. That is why "
-                 "real propellers cavitate, and it is how you get a bang for "
-                 "almost nothing.",
+        try_this="Add NARROWs one at a time and watch the thrust: 1359, 2719, "
+                 "5438 newtons -- and then ZERO. The fourth one pulls the "
+                 "throat below what holds water together, the flow tears, and "
+                 "the collapse eats the jet that caused it. Every real "
+                 "propeller has that cliff and every real designer works just "
+                 "underneath it.",
     ),
     Preset(
         name="the charge",
@@ -101,15 +103,19 @@ PRESETS = [
             "Sonoluminescence and the pistol shrimp, from Bernoulli alone.",
         try_this="Take it deeper. It stops working, because ambient pressure "
                  "has further to fall -- a machine tuned at the station "
-                 "refuses to trip at depth, and you have to add nozzles.",
+                 "refuses to trip at depth, and you have to add nozzles. Then "
+                 "take ONE nozzle off at the station: it stops banging and "
+                 "starts pushing, 5438 N of it. This is the thruster with one "
+                 "module too many, and you cannot have both.",
     ),
     Preset(
         name="the lamp",
         kinds=("INTAKE", "EXPAND", "EXPAND", "EXPAND", "EXPAND", "EXPAND", "PORT"),
         summary="Tears the water by expansion instead of by speed.",
         why="The same tear as the charge, reached the other way and far more "
-            "expensively -- but it needs no pumps and it leaves the water "
-            "cold rather than moving, so it does not shove you off your aim.",
+            "expensively -- but it needs no pumps, so there was never a jet "
+            "for the collapse to eat. Neither one pushes you: a machine that "
+            "is cavitating is not a machine that is thrusting.",
         try_this="Count the EXPANDs you need at 40 m, then at 400 m. The "
                  "number is the depth, and that is the whole difficulty "
                  "curve in one reading.",
@@ -162,6 +168,82 @@ PRESETS = [
         try_this="Move both COILs to the end. It stops cooling almost "
                  "entirely -- the heat has to leave BETWEEN the squeezes, not "
                  "after them. Order is the whole game.",
+    ),
+    Preset(
+        name="the tap",
+        kinds=("INTAKE", "THERMOPILE", "PORT"),
+        summary="Three modules that cost nothing and hand energy back -- "
+                "but only somewhere the water is not all one temperature.",
+        why="A thermopile is a heat engine, and a heat engine needs two "
+            "temperatures. Stand where the ocean is keeping a difference -- a "
+            "vent, a cold layer, the edge of your own coil line -- and this "
+            "takes a cut of the heat crossing between them. The size of the "
+            "cut is Carnot, 1 minus cold over hot in kelvin, and nobody chose "
+            "it.",
+        try_this="Run it in still, even water. It makes EXACTLY zero, not a "
+                 "little. That is not balance, it is the second law: there is "
+                 "no work in one temperature however hot it is. Then walk to "
+                 "the vent and watch the bill go negative.",
+    ),
+    Preset(
+        name="the wellspring",
+        kinds=("INTAKE", "THERMOPILE", "PUMP", "PUMP", "NARROW", "PORT"),
+        summary="A thruster that pays for itself, if you launch from the "
+                "right place.",
+        why="The pile charges off the gradient, the pumps and the nozzle "
+            "spend it, and beside a vent the first is bigger than the second. "
+            "It is the same thruster as before with one module in front of "
+            "it, and the module does not touch the water on its way past.",
+        try_this="Swim away from the vent and keep running it. Nothing about "
+                 "the machine changed and it is now costing you air, because "
+                 "the gradient was never part of the machine -- it was part "
+                 "of where you were standing.",
+    ),
+    Preset(
+        name="the lance",
+        kinds=("INTAKE", "EXPAND", "EXPAND", "EXPAND", "EXPAND",
+               ("RESONATOR", "chirp"), "PORT"),
+        summary="Tears the water with two or three fewer expansions than it "
+                "would take alone, because the note does the rest.",
+        why="Cavitation is about the LOWEST pressure the water sees, and a "
+            "note is a pressure that is not in the pressure number. The "
+            "expansions bring the mean down and the chirp swings it the rest "
+            "of the way under. A resonator is worth two or three expansions "
+            "at every depth in the game, and unlike the charge it leaves you "
+            "nothing to be shoved by.",
+        try_this="Take it to 400 m, then move the RESONATOR to the front. It "
+                 "stops tearing and the bill goes from 0.49 to 37.75 -- "
+                 "seventy-seven times worse for moving one module one place. "
+                 "The pipe eats a chirp at 27% a module, so by the time it "
+                 "arrives there is not enough of it left; and a chain that "
+                 "very nearly tears has to pay to recompress everything a "
+                 "collapse would have recompressed for free.",
+    ),
+    Preset(
+        name="the horn",
+        kinds=("INTAKE", ("RESONATOR", "swell"), "WIDEN", "WIDEN", "PORT"),
+        summary="The long call. Low, wide, and it arrives.",
+        why="Two rules pulling the same way. A swell is 117 Hz and the pipe "
+            "barely touches it -- 0.3% a module against a chirp's 27% -- and "
+            "the WIDENs drop the intensity so it cannot tear the water on the "
+            "way out. Quiet enough to survive being loud.",
+        try_this="Change the note to a chirp and count what comes out the "
+                 "port. It loses three quarters of itself crossing the same "
+                 "three modules, and the missing part is not missing -- it is "
+                 "in the water as heat. High notes bite; low notes carry.",
+    ),
+    Preset(
+        name="the hush",
+        kinds=("INTAKE", "PUMP", "PUMP", "NARROW", "TURBINE", "PORT"),
+        summary="The thruster, with the jet taken back out before it leaves.",
+        why="A PORT throws whatever the slug has, and a jet is a wake, a "
+            "noise, and an arrow pointing at you. The turbine takes the push "
+            "back and hands 78% of it to the economy, so you arrive with "
+            "nothing behind you.",
+        try_this="Compare the thrust to `the thruster`: 2719 newtons becomes "
+                 "zero. You cannot have the push AND the refund, and the "
+                 "turbine is not for going anywhere -- it is for stopping "
+                 "without saying so.",
     ),
 ]
 

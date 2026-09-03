@@ -287,11 +287,27 @@ A Kelvin-Planck violation whose books balanced perfectly.
 
 ## 5. The vocabulary
 
-Eleven modules. No knobs. Each is one sentence.
+Thirteen modules. No knobs. Each is one sentence.
 
-They come as **four opposed pairs and three singletons**, and the pairing is
+They come as **six opposed pairs and one modifier**, and the pairing is
 load-bearing: an opposed pair teaches two things for the price of one, and it
 makes "what is the opposite of this" a question the player can always ask.
+
+It was four pairs and *three* singletons for the first build, and that was the
+shape of a real hole rather than a stylistic one. A playtester found it from
+the outside without knowing the module list:
+
+> the only thing that seems to do nothing is the chirps and groans and sound
+> modules i cannot figure out why they are here
+
+Right on all three counts, and the diagnosis was the same for all three
+singletons. **PUMP had no opposite**, so there was no way to take energy back
+out of moving water. **COIL had no opposite**, so there was no way to take
+energy out of a temperature difference — which meant every verb in the game
+was a cost and the only decision left to a player was how little to run the
+machine. And **RESONATOR was in the list for a completely different reason**:
+it is not half of a pair because it is not the same *kind* of thing, and
+calling it a singleton hid that instead of saying it. See §5.5.
 
 ### 5.1 The pairs
 
@@ -305,14 +321,22 @@ makes "what is the opposite of this" a question the player can always ask.
 | **WIDEN** | The same water through more opening: slower, softer, spread. |
 | **FILTER** | Takes gas, or heat, or salt out of the water and keeps it in a tank. |
 | **INJECT** | Puts what is in a tank back into the water. |
+| **PUMP** | Drives the flow. More flow costs more work. |
+| **TURBINE** | Takes the push back out of the water, as power. |
+| **COIL** | Moves heat between the water inside it and the water outside, toward equal. |
+| **THERMOPILE** | Takes power out of a difference in heat — and only a difference. |
 
-### 5.2 The singletons
+### 5.2 The modifier
 
 | module | the one sentence |
 |---|---|
-| **PUMP** | Drives the flow. More flow costs more work. |
-| **COIL** | Moves heat between the water inside it and the water outside, toward equal. |
-| **RESONATOR** | Makes the water passing through it ring at one of five notes. |
+| **RESONATOR** | Makes the water ring — and a ringing pressure is still a pressure. |
+
+Every other module *moves* one of the five numbers. This one changes what the
+others do to them, which is a different category of thing: in wand-building
+terms it is a modifier rather than a projectile, and every game built on
+ordered lists has exactly that category. It is allowed to have no opposite
+because a modifier does not have one.
 
 ### 5.3 What each one is really for
 
@@ -330,7 +354,28 @@ in `mouths.py` is kept and driven from a count instead of a span.
 in `sigilwave/sim/` is what it runs on, and the note ladder from §7.4 — swell,
 groan, hum, ping, chirp — becomes five named choices instead of a
 circumference. Everything SUBMERGED learned about range, absorption, aperture
-and focus stays true, and stops being the only thing there is.
+and focus stays true, and stops being the only thing there is. What it does
+*inside* the pipe is §5.5, and that is the part the first build got wrong.
+
+**TURBINE and THERMOPILE are where energy comes back**, and the Second Law
+says exactly how much before either of them is described. You cannot get work
+out of one temperature however hot it is — Kelvin–Planck — which is why the
+first build's turbine-on-expansion was free energy with perfectly balanced
+books. You *can* get work out of a **difference**, and only 1 − Tc/Th of the
+heat you move through it. So:
+
+- **TURBINE generates nothing.** It is regenerative braking. `ETA_PUMP ×
+  ETA_TURBINE` is 0.55, so a pump–turbine loop loses nearly half every time
+  round, and the fuzzer checks that no arrangement of them ever comes out
+  ahead. What it is *for* is that it is the only way to stop: a PORT throws
+  whatever the slug has, and a jet is a wake, a noise, and an arrow pointing
+  at you.
+- **THERMOPILE is the generator, and it is a place rather than a machine.** In
+  water that is all one temperature it produces exactly zero — not a small
+  number, zero — and going somewhere is the only thing that changes that. It
+  reads `Ambient.sink`, the water the coil line reaches, which `couple.apply`
+  has always let the player put somewhere else. A radiator with something
+  standing in the heat flow is a power station.
 
 **COIL is the module that makes cooling a design problem.** It is the only
 place law III becomes a decision: heat has to go *somewhere*, the coil is
@@ -342,9 +387,45 @@ must eventually dump. Inject that heat and you have a flare, a thermal decoy,
 a lift bag, and a way to shed the thing that was going to cook you. One pair,
 four tools, all consequences.
 
+### 5.5 What sound had to become before it was a module at all
+
+The playtest verdict above was not a balance note, it was a correct reading of
+the code. A RESONATOR wrote `note_amp`, carried it to the PORT, and **nothing
+in between ever read it.** No ordering involving a RESONATOR changed any
+outcome. In a design whose entire claim is §6 — *order is the whole game* —
+that means the module was not in the vocabulary; it was an output device with
+a frequency label sitting in the module list, and a player was right to say so.
+
+The fix is not a bigger effect. It is noticing what sound physically **is**: a
+pressure that is not in the pressure number. A slug at 1 bar carrying a 3 bar
+note spends part of every cycle at minus 2 bar, and water does not survive
+that. Acoustic cavitation is the whole of how an ultrasonic cleaner works, and
+it needed no new law here — the tear check already existed, it was reading the
+mean instead of the trough. `Slug.tension` is `pressure − acoustic_pressure`,
+and every cavitation test in the game now reads it.
+
+Four things fell out of that one change, and every one of them reaches a
+module that is not about sound:
+
+| | measured |
+|---|---|
+| **A note is worth two or three EXPANDs**, at every depth | 40 m: 5 alone → 2 with a note. 700 m: 7 → 4. |
+| **NARROW and WIDEN are the resonator's knob**, because intensity is power over area | a bare note leaves 4.14 bar of tension; through two NARROWs, 3.28; through two WIDENs, 4.57 |
+| **The pipe eats the note, high notes fastest** — the ocean's own `f^1.6` law | through four modules a swell keeps 3985 J and a chirp keeps 820 |
+| **A note pulls gas out of solution** (rectified diffusion), so it feeds the compressor behind it | SQUEEZE alone +5.83 °C; with a note in front, +9.72 °C |
+
+And the attenuation gives the vocabulary the one thing it did not have: a
+quantity that **decays along the chain**, so *how far a module is from the
+port* matters. At 400 m, `EXPAND EXPAND EXPAND EXPAND RESONATOR` tears the
+water for 0.49 units; the same five modules with the note moved to the front
+do not tear at all and cost **37.75**. Seventy-seven times worse for moving
+one module one place, and the reason is legible: the pipe ate the chirp before
+it arrived, and a chain that *very nearly* tears has to pay to recompress
+everything a collapse would have recompressed for free.
+
 ### 5.4 The second set, deliberately withheld
 
-Three more modules exist in the design and must not be built until the eleven
+Three more modules exist in the design and must not be built until the thirteen
 above are proven fun. Each buys power and costs legibility.
 
 | module | the one sentence | the cost |
@@ -363,7 +444,7 @@ that fires itself, in a place, at a thing, without you there.
 ## 6. Order is the whole game
 
 The test of a wand system is whether rearranging the same parts gives
-genuinely different machines. Here are eight chains built from the eleven
+genuinely different machines. Here are eight chains built from the first eleven
 modules. Nothing below is authored, scripted, or special-cased; every one of
 them is what the six laws do to five numbers.
 
@@ -448,7 +529,7 @@ specific answer here.
 |---|---|
 | hidden numbers you cannot see | every property of a slug is drawn on the slug: colour, size, tautness, grain, shiver |
 | no way to test without dying | the bench, kept from SUBMERGED §10 — still water, one slug, slow motion, a scrub bar |
-| ~200 spells | eleven modules, and three more withheld until the eleven are proven |
+| ~200 spells | thirteen modules, and three more withheld until these are proven |
 | interactions nobody names | the game names your rig back to you in a sentence |
 
 ### 8.1 The rig names itself
@@ -628,7 +709,7 @@ The answer is that the complexity moved from **parameters** to
 
 - Old: 5 parts × roughly 4 continuous knobs each = an unnamed, uncountable
   space where no two experiments are comparable.
-- New: 11 parts × 0 knobs = a countable space where all the depth is in
+- New: 13 parts × 0 knobs = a countable space where all the depth is in
   *ordering*, and every experiment differs from the last by one nameable
   change.
 
@@ -638,7 +719,7 @@ interaction and cost, and those three are exactly what a list gives you for
 free and what a graph destroys.
 
 The second risk is scope, and the answer is that the new simulation is small:
-five numbers, eleven transforms, one list. The ocean — the genuinely hard part
+five numbers, thirteen transforms, one list. The ocean — the genuinely hard part
 — is already built and already green.
 
 ---
@@ -650,13 +731,14 @@ comes before the loop"* was right, and this is the same discipline one level
 further in.
 
 **Day one, headless.** Five numbers, eleven transforms, a list, and a
-`describe()`. No rendering, no pygame, no drawing.
+`describe()`. (Thirteen now — §5 says which two were added and why the
+omission was a hole rather than a shortage.) No rendering, no pygame, no drawing.
 
 Then two questions, both cheap, and either one is allowed to kill it:
 
 **1. Density.** Write down ten chains that produce ten nameable, meaningfully
-different results, using only the eleven modules and touching no transform
-code. If you need a twelfth module to reach ten results, the vocabulary is
+different results, using only the modules that exist and touching no
+transform code. If you need a twelfth module to reach ten results, the vocabulary is
 wrong and no amount of art will fix it.
 
 **2. Diagnosis.** Hand somebody `INTAKE → SQUEEZE → COIL → EXPAND → PORT` with
@@ -702,10 +784,13 @@ Same three parts, same cost, 17 °C apart. And the cascade's own claim holds:
 coils *between* the squeezes give −7.10 °C, the same modules with both coils
 moved to the end give **+0.11 °C**.
 
-**Every module earns its place.** Deleting any one of the nine body modules
-makes between 11 and 71 outcome classes unreachable. There is no dead weight
-in the vocabulary, which is the inverse check and the one that would have
-embarrassed §5's claim that eleven is the right number.
+**Every module earns its place.** Deleting any one of the body modules makes
+between 11 and 71 outcome classes unreachable. There is no dead weight in the
+vocabulary, which is the inverse check and the one that would have embarrassed
+§5's claim to know the right number — and it is the check that killed the
+first version of `Slug.tear_point`, which measured a parcel's nuclei against
+its own collapsed capacity, never fired once, and was 1.6 bar of constant
+doing nothing.
 
 ### 12.2 What is built
 
@@ -713,9 +798,9 @@ embarrassed §5's claim that eleven is the right number.
 |---|---|
 | `sigilwave/rig/units.py` | the constants, and every named lie |
 | `sigilwave/rig/slug.py` | the five numbers, and the ledger that must balance |
-| `sigilwave/rig/modules.py` | the eleven transforms |
+| `sigilwave/rig/modules.py` | the thirteen transforms |
 | `sigilwave/rig/chain.py` | the walk, the sentence, the faults |
-| `sigilwave/rig/library.py` | eleven machines, each with one thing to change |
+| `sigilwave/rig/library.py` | sixteen machines, each with one thing to change |
 | `sigilwave/rig/couple.py` | the boundary with the real ocean |
 | `sigilwave/rig/creatures.py` | one rule, four species |
 | `sigilwave/rig/bench.py` | the bench — `python -m sigilwave.rig.bench` |
@@ -725,17 +810,101 @@ rigs and survives only for `impulse_from`, where the thing being thrown really
 is sound and the lie really is still necessary. Measured over the same four
 seconds SUBMERGED used for its own baseline:
 
-| | moved |
-|---|---|
-| the thruster, 2719 N | **80.9 px** |
-| the charge, 10875 N | **238.8 px** |
-| the heater, no jet | **0.0 px** |
-| SUBMERGED's drawn machine, for comparison | 101-134 px |
+| | at 40 m | at 400 m |
+|---|---|---|
+| the thruster, 2719 N | **80.9 px** | 80.9 px |
+| the charge | **0.0 px** — it tears | **238.8 px** at 10875 N |
+| the heater, no jet | 0.0 px | 0.0 px |
+| SUBMERGED's drawn machine, for comparison | 101–134 px | |
 
-The charge out-thrusts the thruster three to one, because nozzles multiply
-exit velocity and thrust is `mdot x v`. So the best way to travel is also a
-weapon that shoves you off your aim, which is a tradeoff nobody placed.
+**The charge is a weapon in shallow water and an engine in deep water, and it
+is the same seven modules.** That is §9.1 arriving somewhere nobody aimed it:
+ambient pressure decides whether the throat tears, and a torn throat has no
+jet left to push with.
+
+### 12.3 Thrust breakdown, which the fuzzer insisted on
+
+The first draft let a nozzle keep the kinetic energy it borrowed from the
+ocean's static pressure, and a TURBINE downstream then cashed it — a third
+free-energy machine, found in six modules:
+
+```
+INTAKE PUMP NARROW NARROW TURBINE PORT        -12.3 kJ from nothing
+```
+
+A submerged nozzle borrows speed from the local static pressure and gives it
+back downstream; the pressure field is **conservative** and the loop closes.
+The old collapse broke the loop by letting the ocean pay to restore a pressure
+the nozzle had never been charged for lowering. So a collapsing void now eats
+**the flow first**, and only asks the ocean for the shortfall.
+
+Which says something true at the same time, and it is the best accident in
+this pass:
+
+| nozzles on a two-pump thruster | thrust | sound |
+|---|---|---|
+| 0 | 1359 N | — |
+| 1 | 2719 N | — |
+| 2 | **5438 N** | — |
+| 3 | **0 N** — tears | 43666 J |
+| 4 | 0 N | 20623 J |
+| 5 | 0 N | 9740 J |
+
+**A cavitating propeller loses its thrust.** That is thrust breakdown, it is
+the single most important practical consequence of cavitation in real water,
+and it means the loudest machine in the game is no longer also the fastest.
+Every real propeller has that cliff and every real designer works just
+underneath it — which is now a thing a player does too, and nobody wrote a
+rule for it.
+
+### 12.4 The generators, and the three machines that had to die first
+
+Adding a module that *hands energy back* is the most dangerous thing this
+design has done, because every previous conservation bug was a machine that
+generated by accident. All three were found by fuzzing rather than by
+reasoning, and all three had perfectly balanced books:
+
+| what it was | why it was wrong |
+|---|---|
+| `INTAKE EXPAND THERMOPILE PORT` → **+343 kJ** | The pile took its difference from the *slug*. EXPAND cools the slug and books the energy as leaving, correctly — so a rig could **manufacture a cold reservoir** and sell it back. A reservoir is something whose temperature does not change when you take heat out of it; a 240 kg slug is not one. The pile now runs on the two temperatures **the ocean** is maintaining. |
+| `INTAKE PUMP NARROW NARROW TURBINE PORT` → **−12.3 kJ** | §12.3. |
+| four piles with `FILTER`/`INJECT` between them → **185% of Carnot** | Each pile obeys Carnot individually, so stacking is not a violation — it is more hardware. The bound is the **mass flow**: one pass can ferry at most `m·Cp·ΔT` between two temperatures, past which the water leaves hotter than the hot end. That budget is now spent across the chain (`Ledger.pile_heat`), and stacking saturates at 78% — which is `ETA_PILE`, not a number anybody picked. |
+
+What is left is a generator that behaves like one:
+
+| the tap, at 400 m | |
+|---|---|
+| uniform water | **exactly 0.000** units/s — Kelvin–Planck, not balance |
+| sink +5 °C | 0.031 |
+| sink +15 °C | 0.270 |
+| sink +30 °C | 1.028 |
+| sink +55 °C | 3.195 |
+
+A cold sink works exactly as well as a hot one. Against a SQUEEZE at ~4
+units/s, a vent-fed pile pays for propulsion, sound and gas indefinitely and
+never pays for heavy refrigeration — so the vent is worth walking to and does
+not end the economy. And because `couple.apply` writes `heat_from_ocean` back
+into the medium as cooling, **tapping a vent cools the vent.** Depletion, with
+nobody writing a depletion rule.
+
+`sources.Economy` gained a pack (`CHARGE_MAX`), and could not have had one
+before: every verb in the old vocabulary was a cost, so a surplus was not a
+state the economy could reach and a battery would have been a box that never
+had anything in it. The draw order is world, then pack, then lungs — which is
+§3's rule unchanged, with a delay in the middle.
+
+### 12.5 What the suites say now
+
+| suite | |
+|---|---|
+| `selftest_conservation` | **36/36** — including 6000 chains that cannot generate in uniform water, and 6000 more that never beat Carnot with a gradient |
+| `selftest_sound` | **24/24** — the new one, and it exists because a playtester was right |
+| `selftest_couple` | **25/25** |
+| `selftest_density` | **9/9** |
+| `selftest_creatures` | **20/20** |
+
+**114 checks**, against 80 before this pass.
 
 Still missing before this is a game: the station, and a dive that can end.
-And the second go/no-go question in 12 is still open, because it is the one a
+And the second go/no-go question in §12 is still open, because it is the one a
 machine cannot answer.

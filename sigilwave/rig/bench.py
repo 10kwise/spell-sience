@@ -87,7 +87,11 @@ NEUTRAL_HEAT = _hex("#9BA9AD")   # the colour of "no different from ambient"
 WIDTH, HEIGHT = 1440, 900
 SIDEBAR_W = 300
 PAD = 14
-TOPBAR_H = 64
+# Two rows now: depth, and where the coil line runs. The second one had to be
+# a control rather than a number in a file, because a THERMOPILE makes exactly
+# zero without it -- a player who cannot move the sink cannot discover that
+# generators exist, and would correctly conclude the module is broken.
+TOPBAR_H = 96
 CARD_W = 190
 CARD_H = 248
 CARD_GAP = 14
@@ -103,6 +107,11 @@ BAR_H = 74
 BAR_GAP = 14
 
 MAX_DEPTH = 760.0
+
+# How far the coil line can reach, in degrees away from the water the intake
+# is standing in. Colder than any deep water and hotter than any vent, so the
+# slider covers everything the ocean can actually offer and a little past it.
+SINK_RANGE = (-25.0, 60.0)
 
 # The clamp each bar saturates at. Chosen by hand against library.py's own
 # numbers (see the docstring above the module and the sanity check the task
@@ -249,8 +258,14 @@ class Bench:
         self.chain: Chain = p.build()
         self.loaded_preset = p
         self.depth = 40.0
+        # Offset in degC of the water the COIL and THERMOPILE reach. Zero
+        # means the line is not run anywhere and `ambient()` passes None, so
+        # every measurement in RIGS.md taken before the sink existed still
+        # reproduces exactly.
+        self.sink_offset = 0.0
         self.scroll_x = 0
         self.dragging_depth = False
+        self.dragging_sink = False
 
         # populated by draw(), consumed by handle_click()
         self.module_hits = []    # (rect, kind, option)
@@ -258,9 +273,14 @@ class Bench:
         self.preset_hits = []    # (rect, name)
         self.clear_hit = None    # rect
         self.depth_track = None  # rect
+        self.sink_track = None   # rect
 
     def ambient(self):
-        return ambient_at(_clamp(self.depth, 0.0, MAX_DEPTH))
+        d = _clamp(self.depth, 0.0, MAX_DEPTH)
+        if abs(self.sink_offset) < 0.05:
+            return ambient_at(d)
+        base = ambient_at(d)
+        return ambient_at(d, sink_temp=base.temp + self.sink_offset)
 
     def result(self):
         return self.chain.evaluate(self.ambient())
@@ -288,11 +308,25 @@ class Bench:
         t = (x - self.depth_track.left) / max(1, self.depth_track.width)
         self.depth = _clamp(t, 0.0, 1.0) * MAX_DEPTH
 
+    def set_sink_from_x(self, x):
+        if self.sink_track is None:
+            return
+        t = (x - self.sink_track.left) / max(1, self.sink_track.width)
+        lo, hi = SINK_RANGE
+        v = lo + _clamp(t, 0.0, 1.0) * (hi - lo)
+        # Snaps to dead centre, because "the line is not run anywhere" is a
+        # real state and not just a small number.
+        self.sink_offset = 0.0 if abs(v) < 2.0 else v
+
     def handle_click(self, pos):
         x, y = pos
         if self.depth_track is not None and self.depth_track.collidepoint(pos):
             self.dragging_depth = True
             self.set_depth_from_x(x)
+            return
+        if self.sink_track is not None and self.sink_track.collidepoint(pos):
+            self.dragging_sink = True
+            self.set_sink_from_x(x)
             return
         for rect, kind, option in self.module_hits:
             if rect.collidepoint(pos):
@@ -328,7 +362,7 @@ def draw_sidebar(screen, bench, fonts):
 
     draw_tracked(screen, "THE VOCABULARY", fonts["head"], INK, topleft=(x0, y))
     y += 22
-    draw_wrapped(screen, "Eleven modules, no knobs. Click to append.",
+    draw_wrapped(screen, "Six opposed pairs and one modifier. No knobs.",
                  fonts["body_sm"], SOFT_INK, pygame.Rect(x0, y, inner_w, 30))
     y += 32
 
@@ -372,19 +406,27 @@ def draw_sidebar(screen, bench, fonts):
                  fonts["body_sm"], SOFT_INK, pygame.Rect(x0, y, inner_w, 20))
     y += 24
 
+    # Two columns. Sixteen presets in one column ran off the bottom of the
+    # window the moment the generators brought five more with them, and a
+    # library you cannot see the end of is a library whose last entries do not
+    # exist.
     bench.preset_hits = []
     loaded_name = bench.loaded_preset.name if bench.loaded_preset else None
-    for preset in library.PRESETS:
-        r = pygame.Rect(x0, y, inner_w, 24)
+    col_w = (inner_w - 6) // 2
+    top = y
+    for i, preset in enumerate(library.PRESETS):
+        cx = x0 + (i % 2) * (col_w + 6)
+        cy = top + (i // 2) * 27
+        r = pygame.Rect(cx, cy, col_w, 24)
         active = preset.name == loaded_name
         pygame.draw.rect(screen, SURFACE if active else GROUND, r, border_radius=3)
         pygame.draw.rect(screen, BRASS if active else RULE, r, 1, border_radius=3)
-        label = preset.name.upper()
+        label = preset.name.upper().replace("THE ", "")
         col = INK if active else SOFT_INK
         draw_tracked(screen, label, fonts["head_sm"], col,
-                     topleft=(r.left + 8, r.top + 5), spacing=1)
+                     topleft=(r.left + 7, r.top + 5), spacing=1)
         bench.preset_hits.append((r, preset.name))
-        y += 27
+    y = top + ((len(library.PRESETS) + 1) // 2) * 27
 
 
 def _module_button(screen, fonts, rect, kind):
@@ -423,25 +465,53 @@ def draw_topbar(screen, bench, fonts, amb):
     pygame.draw.line(screen, RULE, (SIDEBAR_W, TOPBAR_H), (WIDTH, TOPBAR_H), 1)
 
     x0 = SIDEBAR_W + PAD
-    draw_tracked(screen, "DEPTH", fonts["head_sm"], SOFT_INK, topleft=(x0, 10), spacing=1)
 
-    track = pygame.Rect(x0, 30, 420, 10)
-    bench.depth_track = track
-    pygame.draw.rect(screen, SUNK, track, border_radius=5)
-    t = bench.depth / MAX_DEPTH
-    fill = pygame.Rect(track.left, track.top, int(track.width * t), track.height)
-    pygame.draw.rect(screen, BRASS, fill, border_radius=5)
-    hx = track.left + int(track.width * t)
-    pygame.draw.circle(screen, SURFACE, (hx, track.centery), 8)
-    pygame.draw.circle(screen, BRASS, (hx, track.centery), 8, 2)
+    def slider(label, y, frac, colour):
+        draw_tracked(screen, label, fonts["head_sm"], SOFT_INK,
+                     topleft=(x0, y), spacing=1)
+        track = pygame.Rect(x0 + 92, y + 2, 360, 10)
+        pygame.draw.rect(screen, SUNK, track, border_radius=5)
+        fill = pygame.Rect(track.left, track.top,
+                           int(track.width * _clamp(frac, 0.0, 1.0)), track.height)
+        pygame.draw.rect(screen, colour, fill, border_radius=5)
+        hx = track.left + int(track.width * _clamp(frac, 0.0, 1.0))
+        pygame.draw.circle(screen, SURFACE, (hx, track.centery), 8)
+        pygame.draw.circle(screen, colour, (hx, track.centery), 8, 2)
+        return track
 
-    depth_label = f"{bench.depth:5.0f} m"
-    screen.blit(fonts["mono"].render(depth_label, True, INK), (track.right + 14, 22))
+    bench.depth_track = slider("DEPTH", 12, bench.depth / MAX_DEPTH, BRASS)
+    screen.blit(fonts["mono"].render(f"{bench.depth:5.0f} m", True, INK),
+                (bench.depth_track.right + 14, 8))
 
-    readout = (f"ambient  {amb.temp:6.2f} C   {amb.pressure:6.2f} bar   "
-               f"gas {amb.gas:5.3f} / cap {amb.capacity:5.3f}")
-    screen.blit(fonts["mono_sm"].render(readout, True, SOFT_INK),
-               (track.right + 120, 25))
+    lo, hi = SINK_RANGE
+    off = bench.sink_offset
+    bench.sink_track = slider("COIL LINE", 52, (off - lo) / (hi - lo),
+                              HOT if off > 0 else (COLD if off < 0 else RULE))
+    if abs(off) < 0.05:
+        sink_label, sink_colour = "  here", SOFT_INK
+    else:
+        sink_label = f"{off:+5.0f} C"
+        sink_colour = HOT if off > 0 else COLD
+    screen.blit(fonts["mono"].render(sink_label, True, sink_colour),
+                (bench.sink_track.right + 14, 48))
+
+    # The zero mark, drawn because "not run anywhere" is the default state and
+    # a player needs to be able to get back to it.
+    zx = bench.sink_track.left + int(bench.sink_track.width * (-lo) / (hi - lo))
+    pygame.draw.line(screen, SOFT_INK, (zx, bench.sink_track.top - 5),
+                     (zx, bench.sink_track.bottom + 5), 1)
+
+    rx = bench.sink_track.right + 92
+    screen.blit(fonts["mono_sm"].render(
+        f"ambient  {amb.temp:6.2f} C   {amb.pressure:6.2f} bar", True, SOFT_INK),
+        (rx, 10))
+    screen.blit(fonts["mono_sm"].render(
+        f"gas {amb.gas:5.3f} / cap {amb.capacity:5.3f}", True, SOFT_INK),
+        (rx, 28))
+    if abs(amb.gradient) > 0.05:
+        screen.blit(fonts["mono_sm"].render(
+            f"gradient {amb.gradient:+6.2f} C  -- there is work in this",
+            True, GREEN), (rx, 52))
 
     # a clear-chain button lives here rather than in the sidebar, because it
     # acts on the chain, not on the vocabulary
@@ -764,6 +834,8 @@ def draw_verdict(screen, bench, fonts, result):
         bx = _badge(screen, fonts, (bx, by), fault.kind, HOT if fault.kind == "IT BOILS" else BRASS)
     if result.tore:
         bx = _badge(screen, fonts, (bx + 8, by), "TORE", HOT)
+    if result.generates:
+        bx = _badge(screen, fonts, (bx + 8, by), "CHARGING", GREEN)
     y += 30
 
     if fault is not None:
@@ -787,6 +859,12 @@ def draw_verdict(screen, bench, fonts, result):
         ("HEAT -> OCEAN", f"{led.heat_to_ocean / 1000.0:8.2f}", "kJ"),
         ("GAS IN TANK", f"{led.tank_gas:8.3f}", "kg"),
         ("SPEED OUT", f"{result.out_speed:8.2f}", "m/s"),
+        # The trough rather than the mean. Once a RESONATOR is in the chain
+        # these are different numbers, and it is the one that tears water --
+        # so a TORE badge with nothing low enough on screen to explain it was
+        # the bench lying by omission.
+        ("LOWEST TENSION", f"{result.min_tension:8.3f}", "bar"),
+        ("RECOVERED", f"{led.work_out / 1e6:8.3f}", "MJ"),
     ]
     ry = stats_y
     for label, value, unit in rows:
@@ -849,9 +927,12 @@ def main():
                     bench.scroll(40)
             elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
                 bench.dragging_depth = False
+                bench.dragging_sink = False
             elif e.type == pygame.MOUSEMOTION:
                 if bench.dragging_depth:
                     bench.set_depth_from_x(e.pos[0])
+                if bench.dragging_sink:
+                    bench.set_sink_from_x(e.pos[0])
             elif e.type == pygame.MOUSEWHEEL:
                 bench.scroll(e.y * 40)
 

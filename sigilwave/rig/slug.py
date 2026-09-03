@@ -11,12 +11,16 @@ a system whose behaviour composes and a pile of effects that happen to look
 plausible one at a time.
 """
 
+import math
 from dataclasses import dataclass, field
 
 from .units import (
+    ACOUSTIC_FACE,
     C_P_WATER,
+    DEFAULT_AREA,
     PASCALS_PER_BAR,
     RHO_WATER,
+    SOUND_SPEED,
     gas_capacity,
 )
 
@@ -37,7 +41,7 @@ class Slug:
     pressure: float         # bar absolute
     gas: float              # dissolved gas, in field.py's units
     speed: float = 0.0      # m/s
-    area: float = 0.02      # m^2, the aperture it is moving through
+    area: float = DEFAULT_AREA   # m^2, the aperture it is moving through
     note: float = 0.0       # Hz
     note_amp: float = 0.0   # J of acoustic energy carried
     working: float = 0.0    # compressible fraction, fixed at the intake
@@ -63,6 +67,44 @@ class Slug:
     def kinetic(self) -> float:
         """J. What the port would deliver as thrust."""
         return 0.5 * self.mass * self.speed * self.speed
+
+    @property
+    def acoustic_pressure(self) -> float:
+        """bar. The swing the note rides on, which is NOT in `pressure`.
+
+        This property is the whole of what made sound stop being decoration.
+        A slug at 1 bar carrying a 3 bar note is at minus 2 bar for part of
+        every cycle, and water does not hold together through that -- so the
+        cavitation check has to read the trough rather than the mean, and once
+        it does, every module that touches area or pressure is also a module
+        that touches sound.
+
+        Nothing is invented here. Acoustic intensity is power over area, and a
+        plane wave's pressure amplitude is `sqrt(2 rho c I)`. `note_amp` is
+        joules per pass and a pass is a second (RIG_MASS_FLOW is kg/s), so it
+        is already a power. The only chosen quantity is ACOUSTIC_FACE, which
+        is how big the projector is, and `units.py` says why it cannot be much
+        smaller.
+
+        The area it divides by is the SLUG's, scaled, so NARROW and WIDEN move
+        it: halving the aperture multiplies the pressure by root two. A horn
+        concentrates and a bell spreads, and that is a real horn and a real
+        bell rather than two words in a table.
+        """
+        if self.note_amp <= 0.0 or self.area <= 0.0:
+            return 0.0
+        face = ACOUSTIC_FACE * (self.area / DEFAULT_AREA)
+        intensity = self.note_amp / face
+        return math.sqrt(2.0 * RHO_WATER * SOUND_SPEED * intensity) / PASCALS_PER_BAR
+
+    @property
+    def tension(self) -> float:
+        """bar. The LOWEST pressure this water actually sees, mean minus swing.
+
+        Every cavitation test in the game reads this rather than `pressure`,
+        which is the one-line version of why a RESONATOR is worth placing.
+        """
+        return self.pressure - self.acoustic_pressure
 
     def flow_energy(self, reference_pressure: float) -> float:
         """J of pressure energy this parcel is carrying, against ambient.
@@ -131,6 +173,19 @@ class Ledger:
     # stored
     tank_heat: float = 0.0          # J held by FILTER, spendable by INJECT
     tank_gas: float = 0.0           # kg of gas held
+
+    # How much gradient heat the thermopiles have already ferried this pass.
+    # NOT an energy term -- it never enters `residual`, it is a budget.
+    #
+    # One pass of pipe can carry at most `m * Cp * dT` between two
+    # temperatures, because past that the water would have to leave hotter
+    # than the hot end or colder than the cold one. That is a heat exchanger
+    # effectiveness bound and it is the only thing standing between this game
+    # and a wall of twenty thermopiles: each one on its own obeys Carnot, so
+    # stacking them is not a violation, it is just more hardware -- and the
+    # fuzzer found a chain that reset the slug with FILTER/INJECT between
+    # piles and reached 185% of what one pass can carry.
+    pile_heat: float = 0.0
 
     flow_out: float = 0.0           # J of pressure energy dumped at a port
     latent: float = 0.0             # J the slug gave up freezing instead of cooling
@@ -206,6 +261,7 @@ class Ledger:
         self.bubbles_shed += other.bubbles_shed
         self.tank_heat += other.tank_heat
         self.tank_gas += other.tank_gas
+        self.pile_heat += other.pile_heat
         self.gas_from_ocean += other.gas_from_ocean
         self.gas_to_ocean += other.gas_to_ocean
 
@@ -223,6 +279,36 @@ class Ambient:
     pressure: float      # bar absolute
     gas: float           # dissolved gas fraction in the surrounding water
     depth: float = 0.0   # m, for reporting only
+
+    # The water the COIL and the THERMOPILE are exchanging with, which is not
+    # necessarily the water the INTAKE is standing in.
+    #
+    # This is the second-smallest change in the whole redesign and it is what
+    # makes a generator possible. `couple.apply` already let a player put the
+    # coil somewhere else -- "one who runs the coil down a line has built a
+    # radiator" -- and a radiator with something standing in the heat flow is
+    # a power station. Kelvin-Planck says you cannot get work out of ONE
+    # temperature, so a rig that can only see one temperature can only ever
+    # spend. Giving it a second is the entire difference.
+    #
+    # None means "the same water", so every call site that does not care is
+    # unchanged and reads exactly as it did before.
+    sink_temp: float | None = None
+
+    @property
+    def sink(self) -> float:
+        """degC of whatever the coil is dumping into. Defaults to right here."""
+        return self.temp if self.sink_temp is None else float(self.sink_temp)
+
+    @property
+    def gradient(self) -> float:
+        """degC the ocean is maintaining across this rig, for free.
+
+        Zero in ordinary water. This is the only quantity a THERMOPILE can
+        actually charge against, and it is a property of WHERE THE PLAYER IS
+        STANDING rather than of anything they built.
+        """
+        return self.sink - self.temp
 
     @property
     def capacity(self) -> float:

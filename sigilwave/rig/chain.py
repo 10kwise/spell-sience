@@ -69,6 +69,12 @@ class Result:
     frozen: float = 0.0
     peak_temp: float = 0.0
     min_pressure: float = 0.0
+    # The lowest the water actually got, sound included. `min_pressure` is the
+    # mean and `min_tension` is the trough, and once a RESONATOR is in the
+    # chain they are different numbers -- so a verdict that only ever showed
+    # the mean could report a tear with nothing on screen low enough to have
+    # caused it.
+    min_tension: float = 0.0
     flow: float = 1.0
     out_temp: float | None = None
     out_speed: float = 0.0
@@ -95,6 +101,37 @@ class Result:
         if self.out_temp is None:
             return 0.0
         return self.out_temp - self.ledger.reference_temp
+
+    @property
+    def generates(self) -> bool:
+        """True if this rig hands the economy more than it takes.
+
+        `cost` going negative is the whole of what the generators added, and
+        it is deliberately the SAME number rather than a second resource: a
+        rig that pays for itself is a rig whose bill is negative, so the one
+        quantity a player already reads keeps meaning what it meant.
+        """
+        return self.ledger.net_work < 0.0
+
+    @property
+    def carnot_ceiling(self) -> float:
+        """The most work the ocean will ever let this rig take, in J.
+
+        Not a balance number -- it is `1 - Tc/Th` times the heat available in
+        the gradient the rig is standing in, and `selftest_conservation`
+        checks that no chain ever beats it. If one ever does, the rig has
+        stopped being physics.
+        """
+        from .units import C_P_WATER as _cp, K as _K
+        from .units import RIG_MASS_FLOW as _m
+
+        amb = self.ambient
+        d = abs(amb.sink - amb.temp)
+        if d <= 0.0:
+            return 0.0
+        hot = _K(max(amb.sink, amb.temp))
+        cold = _K(min(amb.sink, amb.temp))
+        return d * _m * _cp * (1.0 - cold / hot)
 
 
 class Chain:
@@ -165,6 +202,7 @@ class Chain:
         ice = 0.0
         peak = ambient.temp
         lowest = ambient.pressure
+        trough = ambient.pressure
         pumps = 0
 
         for i, m in enumerate(self.modules):
@@ -186,10 +224,22 @@ class Chain:
                     ported = True
                 elif m.kind == "PUMP":
                     pumps += 1
+                # Three things that are properties of the WATER rather than
+                # of any one machine, so they live here and no module can
+                # forget them. The order is the order they happen in: the pipe
+                # eats some of the note, whatever tension is left tears the
+                # water or does not, and then the cold end stops at freezing.
+                mod.attenuate(s, led)
+                # Read the trough BEFORE the collapse, because the collapse is
+                # what restores it: recorded afterwards, a chain that tore
+                # reported the healthy pressure the cavity had already put
+                # back, and the verdict could point at nothing.
+                if s is not None:
+                    trough = min(trough, s.tension)
+                if mod.cavitate(s, ambient, led):
+                    events = events + ("tore",)
                 if "tore" in events:
                     tore = True
-                # One place for the freezing floor, applied after every module
-                # so that no module can forget it (modules.freeze_clamp).
                 mod.freeze_clamp(s, led)
                 if s is not None:
                     # The PEAK, not the final value. A chain can freeze solid
@@ -219,7 +269,8 @@ class Chain:
 
         flow = 1.0 * (1.6 ** pumps)
         r = Result(stages=stages, ledger=led, ambient=ambient,
-                   tore=tore, peak_temp=peak, min_pressure=lowest, flow=flow)
+                   tore=tore, peak_temp=peak, min_pressure=lowest,
+                   min_tension=trough, flow=flow)
 
         # What left, read off the last live stage rather than the slug, which
         # a PORT has already consumed.
@@ -282,6 +333,8 @@ class Chain:
         "FILTER": "strains it into the tank",
         "INJECT": "puts the tank back in",
         "PUMP": "drives it harder",
+        "TURBINE": "takes the push back out",
+        "THERMOPILE": "takes power off the difference",
         "RESONATOR": "rings it",
     }
 
@@ -319,6 +372,11 @@ class Chain:
                                                   "It does nothing")
         led = result.ledger
         dT = result.delta_temp
+        # First, because it is the headline: a rig that pays for itself is a
+        # different KIND of machine from one that does a job, and a player who
+        # has just built their first one should be told so by name.
+        if result.generates:
+            return "A generator"
         if result.tore:
             return "A charge"
         if led.tank_gas > 1e-4:
@@ -337,16 +395,23 @@ class Chain:
 # --- the water a bench sits in ----------------------------------------------
 
 
-def ambient_at(depth_m: float, world_height_m: float = 800.0) -> Ambient:
-    """The ocean at a depth, using field.py's own profile and Henry's law.
+def ambient_at(depth_m: float, world_height_m: float = 800.0,
+               sink_temp: float | None = None) -> Ambient:
+    """The ocean at a depth, using field.py own profile and Henry law.
 
     Kept here rather than in the bench so that every selftest, the bench and
     the real coupling all read the same water. When they disagree the bug is
     invisible, because each one looks correct on its own.
+
+    `sink_temp` is the water the COIL and the THERMOPILE are reaching, which
+    defaults to the water everything else is standing in. In the bench it is a
+    slider; in the real ocean `couple.ambient_from` reads it out of the medium
+    at wherever the player ran the line.
     """
     depth_m = float(depth_m)
     fraction = max(0.0, min(1.0, depth_m / max(world_height_m, 1e-6)))
     temp = default_temperature_profile(fraction)
     pressure = ambient_pressure(depth_m)
     gas = GAS_INITIAL_SATURATION * gas_capacity(pressure, temp)
-    return Ambient(temp=temp, pressure=pressure, gas=gas, depth=depth_m)
+    return Ambient(temp=temp, pressure=pressure, gas=gas, depth=depth_m,
+                   sink_temp=sink_temp)

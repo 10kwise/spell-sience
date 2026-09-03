@@ -81,20 +81,32 @@ def cell_water_mass(medium) -> float:
 # --- reading the water -------------------------------------------------------
 
 
-def ambient_from(medium, x: float, y: float) -> Ambient:
+def ambient_from(medium, x: float, y: float, coil_at=None) -> Ambient:
     """The real water at a world position, as the rig sees it.
 
-    Reads the medium's OWN temperature and gas rather than the idealised
+    Reads the medium OWN temperature and gas rather than the idealised
     profile in `chain.ambient_at`, which matters as soon as anything has been
     heated or stripped: a rig standing in its own warm wake must see the wake.
-    That is what makes 6.1's couplings self-inflicted rather than theoretical.
+    That is what makes 6.1 couplings self-inflicted rather than theoretical.
+
+    `coil_at` is where the player ran the line, and it is read here for the
+    same reason `apply` writes there: a COIL and a THERMOPILE are exchanging
+    with THAT water, not with the water the intake is standing in. Passing it
+    is what turns a radiator into a power station, and passing nothing leaves
+    every number exactly as it was.
     """
     row, col = medium._cell(x, y)
+    sink_temp = None
+    if coil_at is not None:
+        srow, scol = medium._cell(coil_at[0], coil_at[1])
+        if (srow, scol) != (row, col):
+            sink_temp = float(medium.temp[srow, scol])
     return Ambient(
         temp=float(medium.temp[row, col]),
         pressure=float(medium.pressure[row, 0]),
         gas=float(medium.gas[row, col]),
         depth=float(y * METRES_PER_PIXEL),
+        sink_temp=sink_temp,
     )
 
 
@@ -258,8 +270,11 @@ def bill(result, economy, sources, at, dt) -> tuple:
     presents a larger and more legible bill than a drawn machine did, because
     `Result.cost` is a real thermodynamic quantity rather than a drive level.
     """
-    want = max(0.0, result.cost)
-    return economy.draw_energy(want, sources, at, dt)
+    # NOT clamped at zero any more. A rig with a THERMOPILE in a gradient has
+    # a negative bill, and throwing that away was the difference between
+    # "there is a generator module" and "generators exist" -- `Economy` now
+    # takes the surplus and stores it (sources.CHARGE_MAX).
+    return economy.draw_energy(result.cost, sources, at, dt)
 
 
 def report(result, medium, x, y) -> str:
@@ -267,7 +282,10 @@ def report(result, medium, x, y) -> str:
     so that reading the machine at the bench and reading it in the water are
     the same skill."""
     amb = ambient_from(medium, x, y)
-    bits = [f"{result.cost:.2f}/s"]
+    bits = [f"{result.cost:+.2f}/s" if result.generates
+            else f"{result.cost:.2f}/s"]
+    if result.generates:
+        bits.append("CHARGING")
     if abs(result.delta_temp) > 0.1:
         bits.append(f"{result.delta_temp:+.1f} C out")
     if result.out_speed > 0.1:

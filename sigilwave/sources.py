@@ -23,6 +23,20 @@ AIR_PER_DRIVE = 0.55
 AIR_MAX = 100.0
 AIR_IDLE = 0.6            # breathing, per second
 
+# How much a pack will hold, in the same units `draw_energy` is asked for.
+#
+# There was no such thing until rigs got a THERMOPILE, and there could not
+# have been: every verb in the old vocabulary was a cost, so a surplus was not
+# a state the economy could reach and a battery would have been a box that
+# never had anything in it.
+#
+# Sized against what it is for rather than by feel. A vent-fed pile makes
+# roughly 1.7 units a second and a thruster burns about 0.46, so this is
+# something like a minute of hard swimming banked from a few seconds of
+# standing still -- enough that going to the vent is worth the trip, not so
+# much that you stop having to.
+CHARGE_MAX = 40.0
+
 
 class Source:
     """Something in the water with energy in it."""
@@ -81,15 +95,33 @@ class Economy:
 
     def __init__(self):
         self.air = AIR_MAX
+        self.charge = 0.0
         self.spent_from_body = 0.0
         self.drawn_from_world = 0.0
+        self.stored = 0.0
 
     def draw_energy(self, want: float, sources, at, dt) -> tuple:
         """Take what the world will give first, and only then breathe.
 
         The ordering is the whole lesson and it is deliberately automatic:
         the player is never asked to choose, they simply notice that standing
-        somewhere else makes the bar stop falling."""
+        somewhere else makes the bar stop falling.
+
+        A NEGATIVE `want` is a rig that generates, and it fills the pack. The
+        order on the way down is world, then pack, then lungs -- the pack is
+        stored world-energy, so spending it before breathing is the same rule
+        the first line states, just with a delay in the middle.
+        """
+        if want < 0.0:
+            # A generator. Nothing is drawn and nothing is breathed except the
+            # idle cost of being alive, which is not optional.
+            room = max(0.0, CHARGE_MAX - self.charge)
+            banked = min(room, -want * dt)
+            self.charge += banked
+            self.stored += banked
+            self.air = max(0.0, min(AIR_MAX, self.air - AIR_IDLE * dt))
+            return want, 0.0
+
         from_world = 0.0
         for s in sources:
             if isinstance(s, Body):
@@ -98,10 +130,16 @@ class Economy:
         from_world = min(from_world, want)
         shortfall = max(0.0, want - from_world)
 
+        # The pack, before the lungs.
+        from_pack = min(self.charge, shortfall * dt)
+        self.charge -= from_pack
+        shortfall -= from_pack / max(dt, 1e-9)
+        shortfall = max(0.0, shortfall)
+
         self.air -= (AIR_IDLE + shortfall * AIR_PER_DRIVE * 60.0) * dt
         self.air = max(0.0, min(AIR_MAX, self.air))
         self.spent_from_body += shortfall * dt
-        self.drawn_from_world += from_world * dt
+        self.drawn_from_world += (from_world * dt + from_pack)
         return from_world + shortfall, shortfall
 
     @property
@@ -113,5 +151,8 @@ class Economy:
         if total <= 1e-9:
             return "nothing drawn yet"
         share = self.drawn_from_world / total * 100.0
-        return (f"{share:3.0f}% of your power came out of the water"
+        line = (f"{share:3.0f}% of your power came out of the water"
                 f" and {100 - share:3.0f}% out of you")
+        if self.stored > 1e-9:
+            line += f", and you put {self.stored:.0f} back"
+        return line

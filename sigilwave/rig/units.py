@@ -67,6 +67,8 @@ import math
 # ever changes what gas does, the rig changes with it and cannot silently
 # disagree with the water it is sitting in.
 from ..medium.field import (
+    ABSORPTION_FREQ_POWER,
+    ABSORPTION_REF_FREQ,
     GAS_ADIABATIC,
     GAS_HENRY,
     GAS_TEMP_GAIN,
@@ -82,6 +84,10 @@ C_P_GAS = 1005.0          # J/kg/K, air at constant pressure
 RHO_WATER = 1000.0        # kg/m^3
 PASCALS_PER_BAR = 1.0e5
 KELVIN_ZERO = 273.15
+SOUND_SPEED = 1500.0      # m/s. field.py computes its own from temperature and
+                          # salinity; the rig only needs it to turn acoustic
+                          # power into a pressure, where a percent does not
+                          # change any decision.
 
 # The adiabatic exponent, (gamma-1)/gamma, from the ocean's own gamma.
 ADIABATIC_EXPONENT = (GAS_ADIABATIC - 1.0) / GAS_ADIABATIC   # = 0.2857...
@@ -104,6 +110,11 @@ def C(kelvin: float) -> float:
 # "how much" is a thing you can point at rather than a number you tuned.
 PRESSURE_RATIO = 3.0
 AREA_RATIO = 2.0
+
+# The bore of an unmodified pipe, in m^2. Lives here rather than in modules.py
+# because two separate things are measured against it: the speed a given mass
+# flow reaches, and -- since sound became a pressure -- how loud a note is.
+DEFAULT_AREA = 0.02
 
 # --- efficiencies: the Second Law, and where it shows up ---------------------
 #
@@ -246,6 +257,85 @@ GAS_COUPLING = 30.0
 TEAR_PRESSURE = 0.06      # bar absolute
 VAPOUR_PRESSURE = 0.023   # bar, water at 20 degC -- what it tears INTO
 
+# --- what sound is, and why it was doing nothing -----------------------------
+#
+# The first build carried `note_amp` from a RESONATOR to a PORT and nothing in
+# between ever read it. That is not a module in a wand-building vocabulary, it
+# is an output device with a frequency label: no module downstream cared what
+# the note was, so no ORDERING involving a RESONATOR ever mattered, and the
+# whole point of a list you read left to right is that ordering matters.
+#
+# The fix is not to give sound a bigger effect. It is to notice what sound
+# physically IS: **a pressure that is not in the pressure number.** A slug at
+# 1 bar carrying a 3 bar note spends part of every cycle at MINUS 2 bar, and
+# water does not survive that. Acoustic cavitation is the whole of how an
+# ultrasonic cleaner works and it needs no new law -- the tear check already
+# exists, it was simply reading the mean instead of the trough.
+#
+# Everything else falls out of that one change:
+#
+#   - NARROW and WIDEN become the RESONATOR's knob, because intensity is
+#     power over area. A horn focuses; a bell spreads.
+#   - EXPAND and RESONATOR combine, because they attack the same threshold
+#     from two directions -- and five expansions plus one note tears water
+#     that neither could tear alone.
+#   - The collapse eats the sound that caused it, so an over-driven projector
+#     goes quiet and hot. That is the real cavitation limit on real sonar, and
+#     it is why sonar arrays are depth-rated.
+
+# The face of the projector, in m^2, at the default bore. NOT a free number:
+# a 4 kW transducer radiating through a 0.02 m^2 pipe mouth would be putting
+# 200 kW/m^2 into the water, which is forty times the intensity at which a
+# real projector cavitates against its own face at one atmosphere. A projector
+# that loud has to be about this big. The consequence is the calibration: one
+# RESONATOR alone does NOT tear surface water, and one RESONATOR through one
+# NARROW does.
+ACOUSTIC_FACE = 1.6
+
+# How much more tension degassed water takes before it tears, in bar.
+#
+# The Blake threshold is not a property of water, it is a property of the
+# NUCLEI in the water: a cavity has to start somewhere, and in gassy water it
+# starts on a bubble. Strip the gas and the water holds together well past
+# vapour pressure -- carefully degassed water sustains tens of bar of tension
+# in the laboratory. This is a deliberately conservative reading of that, and
+# it hands FILTER a second job: a rig that strips its own water stops being
+# able to cavitate it.
+DEGASSED_TENSION = 1.6
+
+# How much of the carried sound one collapse spends. The cavity is driven by
+# the acoustic field, so the energy that slams it shut is the note's own --
+# which is why this is a conversion and not a source, and why an over-driven
+# rig is self-limiting.
+ACOUSTIC_COLLAPSE = 0.35
+
+# --- CHOSEN NUMBER 5: PIPE_LOSS_AT_REF ---------------------------------------
+#
+# What fraction of the note one module of pipe absorbs, at 1000 Hz. The
+# RELATIONSHIP is the ocean's own -- absorption goes as f^ABSORPTION_FREQ_POWER,
+# imported rather than restated -- and only the magnitude is chosen.
+#
+# Real seawater at 1875 Hz absorbs about 0.1 dB per kilometre, which over a
+# metre of pipe is nothing. But a pipe is not open water: it is a lined
+# waveguide with bends, and waveguide attenuation is orders of magnitude worse
+# than free field and far more frequency-selective. So the shape is honest and
+# the size is a game's.
+#
+# What it buys is the only rule in the vocabulary that makes *distance along
+# the chain* matter: a chirp placed early arrives as heat, a swell placed
+# early arrives as sound. Measured per module: a chirp loses 27%, a swell
+# loses 0.3%. Sound is the only quantity in the rig that decays, and the note
+# is what decides how fast.
+PIPE_LOSS_AT_REF = 0.10
+
+
+def pipe_loss(freq: float) -> float:
+    """Fraction of the note one module of pipe eats. High notes die in pipes."""
+    if freq <= 0.0:
+        return 0.0
+    scale = (float(freq) / ABSORPTION_REF_FREQ) ** ABSORPTION_FREQ_POWER
+    return min(0.95, PIPE_LOSS_AT_REF * scale)
+
 # --- what the other modules cost ---------------------------------------------
 #
 # Sized so that one PUMP puts the slug at about 4 m/s, which is a shove you
@@ -256,6 +346,57 @@ VAPOUR_PRESSURE = 0.023   # bar, water at 20 degC -- what it tears INTO
 # and sound are the utilities you spend it on.
 PUMP_WORK = 2750.0        # J per module
 RESONATOR_WORK = 9000.0   # J per module
+
+# --- getting energy BACK: the two generators ---------------------------------
+#
+# Everything above spends. Nothing gave anything back, and a machine vocabulary
+# where every verb is a cost is a vocabulary with no engineering in it -- the
+# only decision left is "how little can I run this".
+#
+# The Second Law says exactly where energy is available and it is worth
+# stating before either module is described, because it is what stops this
+# from being a wish:
+#
+#   **You cannot get work out of one temperature.** Kelvin-Planck. A single
+#   reservoir yields nothing no matter how hot it is, which is why the first
+#   build's turbine-on-expansion was free energy with balanced books.
+#
+#   **You can get work out of a DIFFERENCE**, and only as much as
+#   1 - Tc/Th of the heat you move through it. Carnot.
+#
+# So there are exactly two honest sources in this ocean, and they are the two
+# new modules:
+#
+#   TURBINE takes back the push that is already in the water. It generates
+#   nothing -- it is regenerative braking, and eta_pump * eta_turbine = 0.55
+#   means a pump-turbine loop loses 45% every time round. Its real use is that
+#   it is the only way to STOP without a jet wake announcing where you are.
+#
+#   THERMOPILE is the actual generator, and it runs on the ocean's own
+#   gradients. In water that is all one temperature it produces exactly zero,
+#   which is not a balance decision, it is Kelvin-Planck. Stand between a vent
+#   and cold water and it produces power for as long as the vent lasts -- and
+#   because `couple.apply` writes the heat it takes back into the medium, the
+#   vent actually cools while you tap it. Depletion, with nobody writing a
+#   depletion rule.
+#
+# There is no third generator and the omission is deliberate. The obvious
+# candidate is the pressure difference between two depths, which is real and
+# large -- and it would need a rig to have its intake and its port in
+# different water, which means a chain with two ends, which is a graph. See
+# RIGS.md 5.4 on what a graph costs.
+
+# How much of the temperature difference a thermopile actually moves through
+# itself in one pass. The same number as the coil, because it is the same
+# piece of hardware doing the same job -- a heat exchanger -- and the only
+# difference is that something is standing in the heat flow taking a cut.
+PILE_DRAW = ETA_COIL
+
+# And that cut is Carnot times a real machine's share of Carnot. ETA_TURBINE
+# rather than a thermoelectric's dismal 10-20%, because what a thermopile is
+# here is a closed-cycle turbine on a working fluid, which is what actually
+# gets built when the heat is this cheap and this hot.
+ETA_PILE = ETA_TURBINE
 
 # What one unit of the sources.py economy is worth in joules. That module
 # counts in small abstract numbers and this one counts in joules, so exactly

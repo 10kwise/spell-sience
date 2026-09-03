@@ -82,6 +82,36 @@ def main():
     _shot(screen, fonts, b5, "5_boiler_boiling",
           "the boiler at 40m: seven squeezes, nowhere for the heat to go")
 
+    # 7 & 8. the generator, off the gradient and on it. The same chain twice
+    # with one slider moved, because that is the whole claim: a THERMOPILE is
+    # not a module that makes power, it is a module that makes power SOMEWHERE.
+    b7 = Bench()
+    b7.load_preset("the wellspring")
+    b7.depth = 400.0
+    b7.sink_offset = 0.0
+    r7 = b7.result()
+    _shot(screen, fonts, b7, "7_wellspring_flat",
+          f"the wellspring with the line not run: cost {r7.cost:+.3f} -- a plain thruster")
+
+    b8 = Bench()
+    b8.load_preset("the wellspring")
+    b8.depth = 400.0
+    b8.sink_offset = 40.0
+    r8 = b8.result()
+    _shot(screen, fonts, b8, "8_wellspring_vent",
+          f"the same rig, coil line run to a vent: cost {r8.cost:+.3f} -- it charges")
+
+    # 9. the lance. A tear caused by SOUND rather than by pressure, which is
+    # the case the LOWEST TENSION row exists for: the mean pressure never gets
+    # near the tear point and the water tears anyway.
+    b9 = Bench()
+    b9.load_preset("the lance")
+    b9.depth = 40.0
+    r9 = b9.result()
+    _shot(screen, fonts, b9, "9_lance",
+          f"the lance: mean pressure {r9.min_pressure:.2f} bar, tension "
+          f"{r9.min_tension:.2f} bar -- the note tore it, not the pressure")
+
     # 6. an empty chain -- must never crash, and must say something sensible
     # rather than drawing broken bars for stages that do not exist.
     b6 = Bench()
