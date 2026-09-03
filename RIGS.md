@@ -893,7 +893,54 @@ state the economy could reach and a battery would have been a box that never
 had anything in it. The draw order is world, then pack, then lungs — which is
 §3's rule unchanged, with a delay in the middle.
 
-### 12.5 What the suites say now
+### 12.5 Nothing powers itself, including through the ocean
+
+`selftest_conservation` proves the **ledger** cannot be cheated inside one
+evaluation. That is necessary and it is not sufficient, because a rig runs for
+minutes against a live ocean and **changes the water it is reading**. There is
+a second loop and it does not pass through the ledger at all:
+
+> the rig dumps waste heat into a cell → `couple.apply` writes it into the
+> medium → `couple.ambient_from` reads that cell back as the sink → the
+> THERMOPILE sees a gradient → it generates
+
+Every step is correct on its own. It is a perpetual motion machine assembled
+from four honest parts in four different files, all of which balance, and no
+test in this project could have seen it. `selftest_selfpower` closes it by
+running the loop against a real `Medium`, and the answer is better than
+"balanced" — it is **structurally impossible**:
+
+| self-heating loop, 60 s | net | gradient it built |
+|---|---|---|
+| 1 × SQUEEZE → COIL → THERMOPILE | −514 units | +1.77 °C |
+| 2 × SQUEEZE | −943 | +3.09 |
+| 4 × SQUEEZE | −1647 | +6.64 |
+| 8 × SQUEEZE | −3091 | +15.77 |
+
+**The harder you try, the worse it gets**, which is the signature of a
+Carnot-bounded loop rather than a tuned one. A pile hands back
+`ETA_PILE × (1 − Tc/Th)` of the heat crossing it, and a gradient the rig made
+itself cost at least a joule per joule. Break-even needs a difference of
+**372 K**; water boils at 100 and the rig faults at `IT BOILS` long before. At
+a 96 °C self-made gradient the loop still returns only **0.20 per joule**.
+
+And the contrast that says what the modules are *for*. Standing 128 m off in
+cold water with the coil line run into a vent's plume — which is the play
+pattern, because the heat is one cell *above* the vent where buoyancy put it:
+
+| run off a vent, 60 s | |
+|---|---|
+| the tap | **+5.46 units** |
+| sonar | **+5.19** |
+| a thruster | **+2.47** |
+| a refrigerator | −406.53 |
+
+A vent pays for propulsion, sound and gas indefinitely and never pays for
+heavy thermal work — so it is worth walking to and it does not end the
+economy. And tapping it **cools it by 1.02 °C** against an untapped one,
+because taking power out of the water means the water has less.
+
+### 12.6 What the suites say now
 
 | suite | |
 |---|---|
@@ -902,8 +949,9 @@ had anything in it. The draw order is world, then pack, then lungs — which is
 | `selftest_couple` | **25/25** |
 | `selftest_density` | **9/9** |
 | `selftest_creatures` | **20/20** |
+| `selftest_selfpower` | **15/15** — the loop through the ocean, run rather than argued |
 
-**114 checks**, against 80 before this pass.
+**129 checks**, against 80 before this pass.
 
 Still missing before this is a game: the station, and a dive that can end.
 And the second go/no-go question in §12 is still open, because it is the one a
