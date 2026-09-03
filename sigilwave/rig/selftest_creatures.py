@@ -427,9 +427,28 @@ def test_uniform_water_produces_no_drift():
         start, end = _run(c, med, 20.0)
         if _dist(start, end) > worst:
             worst, worst_kind = _dist(start, end), kind
-    check("no species drifts when its comfort is already flat", worst < 2.0,
-          f"worst drift {worst:.2f} px by the {worst_kind}")
-    _report("worst drift", f"{worst:.3f} px in 20 s ({worst_kind})")
+
+    # 55 px, not 2. The threshold moved because the behaviour did, and the
+    # reason is worth keeping.
+    #
+    # These species used to be exactly motionless in flat water, which passed
+    # this test and looked, in a live window, like a bug -- a stalker that
+    # reaches the vent it wanted is at a MAXIMUM, where the gradient is zero
+    # by definition, so it stopped dead on it and stayed there for as long as
+    # anybody watched. Two playtest reports of "the stalkers are inactive"
+    # before it was taken seriously. They now patrol: a tight circle of about
+    # twenty pixels, four times faster than a forager's search arc.
+    #
+    # What this test is FOR is attribution -- "the heater moved it" has to be
+    # a claim about the heater. That survives, because a patrol is bounded and
+    # a response is not: tests [1] to [6] above move these same species 90 to
+    # 260 px toward a feature. The bar sits between the two, and it would
+    # still catch the real bug it was written for (SUBMERGED 8.4 floated a
+    # motionless diver 193 px through still water).
+    check("no species drifts anywhere in particular when its comfort is flat",
+          worst < 55.0, f"worst drift {worst:.2f} px by the {worst_kind}")
+    _report("worst patrol", f"{worst:.1f} px in 20 s ({worst_kind}), "
+                            f"against 90-260 px when there IS something to climb")
 
 
 def test_nothing_tunnels_through_rock():

@@ -152,9 +152,18 @@ def test_c_rises_with_temperature_salinity_and_pressure() -> None:
 
 
 def test_heat_spreads_and_is_conserved() -> None:
-    """§7.1: heat diffuses. Nothing removes it, so the total may only move
-    around -- and it has to be exact, because the acoustic mirror is built by
-    accumulating heat and a leaky integrator would quietly erase it."""
+    """§7.1: heat diffuses, and TRANSPORT may only move it around.
+
+    This test used to step the whole medium and require exact conservation.
+    It now steps transport directly, because `OCEAN_RELAX` deliberately added
+    the one thing that does remove heat -- the ocean outside the window --
+    after a playtester noticed the currents growing stronger the longer a
+    session ran. Both halves of that are worth testing and they are different
+    claims, so they are two tests now: diffusion and buoyancy still have to be
+    exact to machine precision, because the acoustic mirror is built by
+    accumulating heat and a leaky integrator would quietly erase it, and
+    `test_heat_does_not_accumulate_forever` covers the sink.
+    """
     medium = Medium(640, 480)
     medium.set_temperature_profile(flat(10.0))
     medium.carve(0, 400, 640, 80)
@@ -166,8 +175,10 @@ def test_heat_spreads_and_is_conserved() -> None:
     row, col = medium._cell(320.0, 160.0)
     peak_before = float(medium.temp[row, col])
 
+    # Transport only: no relaxation, so the books have to balance exactly.
     for _ in range(240):
-        medium.step(1.0 / 60.0)
+        medium._diffuse_heat(1.0 / 60.0)
+        medium._buoyancy(1.0 / 60.0)
 
     peak_after = float(medium.temp[row, col])
     neighbours = [
@@ -189,12 +200,57 @@ def test_heat_spreads_and_is_conserved() -> None:
     after = float(medium.temp[fluid].sum())
     drift = abs(after - seeded) / abs(seeded - before)
     check(
-        f"total heat conserved with nothing leaving (relative drift {drift:.2e} of what was added)",
+        f"transport moves heat without creating or destroying it "
+        f"(relative drift {drift:.2e} of what was added)",
         drift < 1e-12,
     )
     check(
         "rock neither warms nor cools (zero-flux boundary, so a wall stores nothing)",
         np.allclose(medium.temp[medium.solid], 10.0),
+    )
+
+
+def test_heat_does_not_accumulate_forever() -> None:
+    """The other half: a domain with a source in it has to settle.
+
+    Found by playing rather than by testing. A station and a vent between them
+    add about 2.5e-3 degC a second to the mean, and with no sink anywhere the
+    water warmed without limit -- which matters because buoyancy is driven by
+    density anomalies, so THE CURRENTS GREW WITH IT. Peak flow climbed from
+    6.7 to 8.8 px/s in two minutes and kept going, until the water could move
+    a diver faster than his thruster could.
+    """
+    medium = Medium(1200, 800)
+    hot = []
+    flow = []
+    for i in range(1, 5401):                      # six minutes at 15 Hz
+        medium.add_heat(600.0, 400.0, 0.45 / 15.0)
+        medium.step(1.0 / 15.0)
+        if i % 900 == 0:
+            u, v = medium.flow_field
+            hot.append(float(medium.temp.mean()))
+            flow.append(float(np.hypot(u, v).max()))
+
+    early = hot[1] - hot[0]
+    late = hot[-1] - hot[-2]
+    check(
+        f"a constant source settles instead of integrating "
+        f"(warming per minute {early:+.4f} degC early, {late:+.4f} late)",
+        abs(late) < abs(early) * 0.5 + 1e-9,
+    )
+    # Compared across the SECOND half only. A plume takes a couple of minutes
+    # to establish, so measuring from the first sample scores start-up as
+    # runaway -- the first version of this check did exactly that and read
+    # 0.67 -> 6.71 px/s as a failure when it was the plume being born.
+    mid = flow[len(flow) // 2]
+    check(
+        f"so the currents stop growing once the plume is up "
+        f"({mid:.2f} -> {flow[-1]:.2f} px/s over the second half)",
+        flow[-1] < mid * 1.25,
+    )
+    check(
+        "and relaxation pulls toward the profile rather than to zero",
+        float(medium.temp.mean()) > 1.0,
     )
 
 
@@ -692,6 +748,7 @@ def main() -> None:
         test_sound_speed_has_an_interior_minimum,
         test_c_rises_with_temperature_salinity_and_pressure,
         test_heat_spreads_and_is_conserved,
+        test_heat_does_not_accumulate_forever,
         test_warm_rises_and_cold_sinks,
         test_warm_patch_makes_a_density_boundary,
         test_bubbles_rise_and_change_size,

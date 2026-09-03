@@ -106,6 +106,16 @@ CONDITION_GAIN = 1.2
 # `menace` is exempt and deliberately louder, because nothing eats it. A
 # channel that is never consumed cannot leak into the substance chain, so it
 # is free to be as loud as the behaviour needs.
+#
+# THE CONSTRAINT, stated once and tested in `selftest_cycle`:
+#
+#     signal_rate * CONDITION_GAIN / CONDITION_DECAY  <  1
+#
+# The left side is how much a creature emits per unit of food that sustains
+# it, because holding condition at 1.0 costs exactly CONDITION_DECAY /
+# CONDITION_GAIN units a second. Above 1 the creature is an amplifier and the
+# web can run on itself. The grazer was at 1.05 -- a live leak that nothing
+# caught, because every measured run had it starving instead of emitting.
 
 
 def _band(value, low, high, softness):
@@ -223,6 +233,14 @@ class Creature:
     # their behaviour exactly as `selftest_creatures` measured it.
     condition: float = 1.0
 
+    # How fast condition falls, per second. Per species rather than global,
+    # because metabolism is not uniform across a food web: a hunter is the
+    # rarest thing in the ocean and eats rarely, and giving it the same
+    # running cost as a filter feeder starved it to death on a loop. Measured
+    # at the shared 0.08: hunters sat at condition 0.02 and died on repeat
+    # while everything below them was full.
+    condition_decay: float = CONDITION_DECAY
+
     def __post_init__(self):
         # Seeded from where it starts, so a shoal does not cast about in
         # unison, and so a run is reproducible without an RNG anywhere in
@@ -268,8 +286,22 @@ class Creature:
             c *= math.exp(self.bubble_response * bubbles)
 
         if self.heat_hunter:
+            # asinh, not a clamp, and this was a live bug rather than a
+            # tidy-up. `exp(gain * clamp(a, -6, 6))` is FLAT wherever the
+            # anomaly exceeds 6 degC, which is exactly where a heat-hunter
+            # most wants to be -- so a stalker that reached a vent found a
+            # gradient of exactly zero and stopped there permanently. Measured
+            # in the observatory: mean speed 0.00 px/s, comfort 5.4e5, sitting
+            # on the vent, for as long as anybody watched.
+            #
+            # This is the same mistake `selftest_cycle` caught in the trophic
+            # channels, still living here. asinh is defined on the whole line
+            # (an anomaly can be negative), odd, monotone everywhere, and grows
+            # like a logarithm, so exp(gain * asinh(a)) rises like a power law
+            # instead of an exponential: no clamp, no overflow, and no flat
+            # spot anywhere a creature can reach.
             a = self._anomaly(medium, row, col)
-            c *= math.exp(self.heat_hunter * max(-6.0, min(6.0, a)))
+            c *= math.exp(self.heat_hunter * math.asinh(a))
 
         # The cycle uses a POWER law rather than the exponential above, and
         # that difference was measured rather than chosen.
@@ -338,22 +370,28 @@ class Creature:
             vx += (gx / n) * self.speed * dt * 4.0
             vy += (gy / n) * self.speed * dt * 4.0
 
-        # Cast about, but only if this creature forages. A slow turn rather
-        # than a jitter, because an animal searching sweeps and a random walk
-        # vibrates.
+        # Cast about. An animal searching sweeps; a random walk vibrates.
         #
-        # The gate on `reads` is the whole point and it was put there by a
-        # failing test. RIGS.md 9's four species are defined by what the
-        # PLAYER does to the water, and `selftest_creatures` requires that
-        # they do not move when their comfort is flat -- otherwise "the heater
-        # moved it" stops being an attributable claim and every measurement in
-        # that suite is contaminated. Searching belongs to foraging, which is
-        # 13.4's cycle, so a creature that eats searches and a creature that
-        # only prefers does not.
-        if self.reads:
-            self.wander_phase += dt * 0.6
-            vx += math.cos(self.wander_phase) * self.speed * dt * 4.0 * WANDER
-            vy += math.sin(self.wander_phase) * self.speed * dt * 4.0 * WANDER
+        # TWO KINDS OF RESTLESSNESS, and the second one was put here by a
+        # playtester saying "the stalkers are inactive" twice.
+        #
+        # A forager searches wide: it has somewhere to get to and no idea
+        # where, so it commits to a long slow arc.
+        #
+        # Everything else PATROLS, tightly. A creature that climbs a gradient
+        # is motionless wherever the gradient is zero -- and the place a
+        # gradient is zero is the top, so a heat-hunter that actually reaches
+        # the vent it wanted stops dead on it and stays there forever. That is
+        # arguably correct and it reads as a broken animal. The patrol turns
+        # four times faster, so it circles inside about twenty pixels instead
+        # of travelling: visibly alive, and it still goes nowhere in
+        # particular, which is what `selftest_creatures` [7] actually needs --
+        # that a creature with nothing to read has no BIAS, not that it is
+        # frozen.
+        turn = 0.6 if self.reads else 2.4
+        self.wander_phase += dt * turn
+        vx += math.cos(self.wander_phase) * self.speed * dt * 4.0 * WANDER
+        vy += math.sin(self.wander_phase) * self.speed * dt * 4.0 * WANDER
 
         sp = math.hypot(vx, vy)
         if sp > 1e-9:
@@ -390,7 +428,8 @@ class Creature:
 
         if self.feed_rate > 0.0:
             self.condition = min(1.0, max(
-                0.0, self.condition - CONDITION_DECAY * dt + CONDITION_GAIN * ate))
+                0.0, self.condition - self.condition_decay * dt
+                + CONDITION_GAIN * ate))
 
         for channel, yield_per in self.emits:
             if yield_per > 0.0 and ate > 0.0:
@@ -622,6 +661,18 @@ class Seep:
         medium.deposit(self.channel, self.pos[0], self.pos[1], self.rate * dt)
 
 
+# How long a creature can sit at zero condition before it dies, and what
+# fraction of a full carcass it is worth.
+#
+# NOTHING DIED IN THE FIRST BUILD, and that was a hole in the middle of the
+# design rather than a missing feature. RIGS.md 13.4's cycle begins at
+# carrion, but the only things producing chum were the player and a hunter's
+# scraps -- so with no player in the water the scavenger tier sat at condition
+# 0.000 in every configuration measured, however much food was poured in at
+# the bottom. A food web where nothing dies has no scavengers in it.
+STARVE_SECONDS = 70.0
+CARCASS_OF_A_CREATURE = 0.35
+
 CARCASS_YIELD = 200.0    # total units of chum a body is worth
 CARCASS_SECONDS = 300.0  # over which it gives them up, and then it is gone
 
@@ -682,6 +733,89 @@ class Carcass:
         give = min(self.yield_left, self.rate * dt)
         self.yield_left -= give
         medium.deposit("chum", x, y, give)
+
+
+class Ecosystem:
+    """The cycle as a running thing: who is in the water, what feeds them,
+    what dies, and what that death feeds.
+
+    Death is the part worth reading. A creature that cannot find food starves,
+    becomes a `Carcass`, and is replaced by a recruit from outside the window
+    -- the same argument as `field.OCEAN_RELAX`, which is that this domain is
+    a 1.2 km hole cut out of an ocean and things cross the edges of it. That
+    keeps the population steady enough to watch while making the carrion node
+    real, so the scavengers have something to be for.
+    """
+
+    def __init__(self, medium, seeps=(), counts=None, seed=5):
+        install_channels(medium)
+        self.medium = medium
+        self.rng = np.random.default_rng(seed)
+        self.seeps = [s if isinstance(s, Seep) else Seep(s) for s in seeps]
+        self.carcasses = []
+        self.died = 0
+        self._starving = {}
+        counts = counts or dict(PYRAMID)
+        self.packs = {k: [make_cycle(k, self._somewhere()) for _ in range(n)]
+                      for k, n in counts.items()}
+
+    def _somewhere(self):
+        return (float(self.rng.uniform(40, self.medium.width - 40)),
+                float(self.rng.uniform(40, self.medium.height - 40)))
+
+    def all_creatures(self):
+        for pack in self.packs.values():
+            for c in pack:
+                yield c
+
+    def step(self, dt, sounds=()):
+        snowfall(self.medium, dt, self.rng)
+        for s in self.seeps:
+            s.step(dt, self.medium)
+        for b in self.carcasses:
+            b.step(dt, self.medium)
+        self.carcasses = [b for b in self.carcasses if not b.spent]
+
+        for kind in CYCLE_ORDER:
+            for c in self.packs.get(kind, ()):
+                c.step(dt, self.medium, sounds)
+                self._reap(c, dt)
+
+    def _reap(self, c, dt):
+        key = id(c)
+        if c.condition > 0.0:
+            if key in self._starving:
+                del self._starving[key]
+            return
+        self._starving[key] = self._starving.get(key, 0.0) + dt
+        if self._starving[key] < STARVE_SECONDS:
+            return
+        del self._starving[key]
+        self.died += 1
+        self.carcasses.append(Carcass(
+            pos=(c.pos[0], c.pos[1]),
+            yield_left=CARCASS_YIELD * CARCASS_OF_A_CREATURE,
+            rate=CARCASS_YIELD * CARCASS_OF_A_CREATURE / CARCASS_SECONDS,
+        ))
+        # Recruited from outside the window, half fed, somewhere else.
+        c.pos = self._somewhere()
+        c.vel = (0.0, 0.0)
+        c.condition = 0.5
+
+
+# A real pyramid: the things that get eaten outnumber the things that eat
+# them, by a lot. The first build had 12 decomposers under 22 grazers under 5
+# hunters, which is upside down -- each level can only pass on a fraction of
+# what it takes in, so a wide top starves however much is poured in at the
+# bottom. Measured: raising the supply fourfold did not move a single species
+# above condition 0.2, because supply was never what was wrong.
+PYRAMID = {
+    "scavenger": 7,
+    "decomposer": 26,
+    "drifter": 20,
+    "grazer": 13,
+    "hunter": 3,
+}
 
 
 def scavenger(pos=(0.0, 0.0)) -> Creature:
@@ -746,7 +880,7 @@ def grazer(pos=(0.0, 0.0)) -> Creature:
         depth_band=(0.0, 700.0), depth_softness=260.0,
         reads="swarm", read_gain=1.5, feed_rate=0.16,
         flees="menace", flee_gain=2.0,
-        signals=(("shoal", 0.07),),
+        signals=(("shoal", 0.05),),
         pos=pos, speed=68.0,
     )
 
@@ -762,6 +896,7 @@ def hunter(pos=(0.0, 0.0)) -> Creature:
         temp_band=(1.0, 20.0), temp_softness=8.0,
         depth_band=(0.0, 760.0), depth_softness=320.0,
         reads="shoal", read_gain=1.4, feed_rate=0.18,
+        condition_decay=0.028,
         emits=(("chum", 0.35),),
         signals=(("menace", 0.5),),
         pos=pos, speed=74.0,

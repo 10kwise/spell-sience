@@ -120,6 +120,23 @@ PRESSURE_PER_METRE = 0.1   # bar
 HEAT_DIFFUSIVITY = 60.0     # px^2/s: a heated patch smears about one cell per second
 MAX_DIFFUSION_ALPHA = 0.24  # the explicit 5-point stencil is unstable past 0.25
 
+# How fast the water is pulled back toward the profile it started from, per
+# second. This is the ocean OUTSIDE the window, and without it the domain has
+# no heat sink at all.
+#
+# Measured on a station and one vent, which between them add about 2.5e-3 degC
+# a second to the mean: the water warmed forever, and because buoyancy is
+# driven by density anomalies, the CURRENTS GREW WITH IT -- peak flow went from
+# 6.7 to 8.8 px/s in two minutes and kept climbing, until the water was moving
+# a diver faster than his thruster could. A playtester noticed the drift before
+# any test did, which is the argument for the observatory existing.
+#
+# 1/200 s is chosen so a continuous source settles at a fraction of a degree of
+# mean excess rather than integrating without limit. It is slow next to
+# everything else here (diffusion is 60 px^2/s), so a plume still forms, still
+# rises, and still reads on every instrument -- it just stops accumulating.
+OCEAN_RELAX = 0.005
+
 # --- trophic channels (RIGS.md 13.4) ----------------------------------------
 # The ecosystem cycle is carried by diffusing scalars rather than by creatures
 # perceiving one another, and that choice is the whole reason RIGS.md 9's one
@@ -764,6 +781,8 @@ class Medium:
         fractions = (np.arange(self.ny) + 0.5) / self.ny
         column = np.array([float(fn(float(f))) for f in fractions]).reshape(-1, 1)
         self.temp[:] = column
+        # Remembered, because it is what OCEAN_RELAX pulls back toward.
+        self._baseline = column.copy()
         self.gas[:] = GAS_INITIAL_SATURATION * self._gas_capacity()
         self._dirty = True
 
@@ -789,6 +808,7 @@ class Medium:
         if dt <= 0.0:
             return
         self.elapsed += dt
+        self._relax_heat(dt)
         self._diffuse_heat(dt)
         self._advect_channels(dt)
         self._step_channels(dt)
@@ -815,6 +835,22 @@ class Medium:
                 (slice(1, -1), slice(2, None)),
             )
         ]
+
+    def _relax_heat(self, dt: float) -> None:
+        """Pull the water back toward the column it started as.
+
+        The domain is a 1.2 km window onto an ocean, and an ocean is a heat
+        sink. Without this the only heat operations here are diffusion, which
+        moves heat around, and buoyancy, which moves water around -- neither
+        removes anything, so any source integrates forever. See OCEAN_RELAX.
+        """
+        base = getattr(self, "_baseline", None)
+        if base is None:
+            return
+        k = min(1.0, OCEAN_RELAX * dt)
+        if k <= 0.0:
+            return
+        self.temp += np.where(self.solid, 0.0, (base - self.temp) * k)
 
     def _diffuse_heat(self, dt: float) -> None:
         alpha = min(HEAT_DIFFUSIVITY * dt / (self.cell_size**2), MAX_DIFFUSION_ALPHA)

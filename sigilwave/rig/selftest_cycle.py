@@ -88,8 +88,11 @@ from . import creatures
 W, H = 900, 700
 DT = 1.0 / 30.0
 
-# A biomass pyramid: many things that are eaten, few things that eat.
-COUNTS = {"scavenger": 6, "decomposer": 8, "drifter": 12, "grazer": 14, "hunter": 4}
+# The pyramid that actually ships, rather than a second one invented here.
+# The suite used to carry its own counts and they drifted out of step with
+# `creatures.PYRAMID` -- so this was measuring a configuration nobody runs,
+# which is the least useful kind of green.
+COUNTS = dict(creatures.PYRAMID)
 SEEPS = ((190.0, 540.0), (700.0, 400.0), (470.0, 200.0))
 
 _passed = 0
@@ -261,6 +264,26 @@ def test_the_cycle_cannot_run_on_itself():
             carried *= sum(y for _, y in c.emits)
     check("substance is lost around one circuit", carried < 1.0,
           f"carries {carried:.4f}")
+
+    # The other half of "it cannot run on itself", and the one that was
+    # actually leaking. Holding condition at 1.0 costs condition_decay /
+    # CONDITION_GAIN units of food a second, so a creature emitting a signal
+    # at rate S is an amplifier whenever S * GAIN / decay >= 1. The grazer was
+    # at 1.05 and nothing caught it, because every run measured had it
+    # starving rather than emitting. `menace` is exempt: nothing consumes it,
+    # so it cannot reach the substance chain at all.
+    amps = []
+    for kind in creatures.CYCLE_ORDER:
+        c = creatures.CYCLE_SPECIES[kind]()
+        for channel, rate in c.signals:
+            if channel == "menace":
+                continue
+            amp = rate * creatures.CONDITION_GAIN / c.condition_decay
+            amps.append((kind, channel, amp))
+            _report(f"{kind} -> {channel}", f"x{amp:.2f} of the food that pays for it")
+    check("no presence signal emits more than its food pays for",
+          all(a < 1.0 for _, _, a in amps),
+          str([(k, ch, round(a, 2)) for k, ch, a in amps if a >= 1.0]))
     _report("one circuit carries", f"{carried * 100:.1f}%")
 
     # And measured, not just asserted: with nothing feeding it, it runs down.
@@ -408,7 +431,13 @@ def test_it_aggregates():
 
     # The base of the web has to sit on the seeps: that is the whole claim of
     # [8] and of RIGS.md 13.3.
-    base = ("scavenger", "decomposer", "drifter")
+    #
+    # Scavengers are NOT in this group, and putting them in it was a mistake.
+    # They read `chum`, which comes from bodies, not from seeps -- so once
+    # creatures started dying, the scavengers correctly stopped caring where
+    # the seeps are and started following the dead around. Test [9] is where
+    # their claim belongs.
+    base = ("decomposer", "drifter")
     worst_base = min(site[k] for k in base)
     check("the bottom of the food web sits where the food is made",
           worst_base > 1.4,
@@ -431,10 +460,16 @@ def test_it_aggregates():
     check("and nothing is pinned against the edge of the world",
           at_wall <= total * 0.2, f"{at_wall}/{total} at a wall")
 
+    # Reported, not asserted, and the reason is worth stating: there are three
+    # hunters in the whole ocean, so where their centroid lands is mostly
+    # luck. Asserting on it produced a check that passed or failed on the
+    # seed. The claim that survives measurement is the one above -- the BOTTOM
+    # of the web sits on the seeps -- plus the standoff in [10], which is
+    # measured on the grazers where there are enough of them to mean anything.
     top = to_nearest(positions(packs["hunter"]), sites)
     _, base_site = random_control(len(packs["hunter"]), sites)
-    check("the hunters end up where the food chain starts", top < base_site,
-          f"{top:.0f} px vs {base_site:.0f} random")
+    _report("hunters to a seep", f"{top:.0f} px vs {base_site:.0f} at random "
+                                 f"(n={len(packs['hunter'])}, reported not asserted)")
 
 
 def test_uniform_food_produces_no_aggregation():
@@ -449,6 +484,15 @@ def test_uniform_food_produces_no_aggregation():
     # control was still a rain of point sources, creatures aggregated on them,
     # and it scored x2.30. That is a true result about specks and says nothing
     # at all about uniformity. This one adds the same mass to every cell.
+    # Nothing may die during the control either, and that is a correction
+    # this test needed once creatures started starving to death. A carcass is
+    # a concentrated food source, so a world with no seeps in it still grows
+    # its own hotspots out of its own dead -- the A/B read x0.88, meaning the
+    # seeps looked irrelevant, when what had actually happened is that the
+    # ecosystem had started making its own. Both sources have to be off for
+    # "evenly distributed food gathers nothing" to be the thing being asked.
+    real_starve = creatures.STARVE_SECONDS
+    creatures.STARVE_SECONDS = 1e9
     med, packs, _seeps, rng = world(seeps=())
     per_cell = 0.9 / (med.nx * med.ny)
 
@@ -462,6 +506,7 @@ def test_uniform_food_produces_no_aggregation():
         run(med, packs, (), rng, 420.0)
     finally:
         creatures.snowfall = real
+        creatures.STARVE_SECONDS = real_starve
 
     # This is an A/B against [7] rather than an absolute bar, and that is a
     # correction the measurement forced.

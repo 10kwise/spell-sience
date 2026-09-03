@@ -51,7 +51,7 @@ from .rig.station import Station
 from .sources import Economy, Vent
 
 WORLD_W, WORLD_H = 1200, 800
-TOPBAR = 78
+TOPBAR = 98
 WIN_W, WIN_H = WORLD_W, WORLD_H + TOPBAR
 
 SIM_DT = 1.0 / 30.0          # creatures and the diver
@@ -82,7 +82,7 @@ BAR = (16, 24, 29)
 # peaks around 0.1 and nutrient around 3, so a single knee either blows out the
 # top of one or shows nothing at all of the other.
 CHANNEL_KNEE = {
-    "chum": 0.12, "nutrient": 0.45, "bloom": 0.06,
+    "chum": 0.9, "nutrient": 0.45, "bloom": 0.06,
     "swarm": 0.30, "shoal": 0.35, "menace": 0.25,
 }
 CHANNELS = ("chum", "nutrient", "bloom", "swarm", "shoal", "menace")
@@ -94,6 +94,18 @@ CHANNEL_COLOUR = {
     "shoal":    (90, 140, 220),
     "menace":   (185, 60, 150),
 }
+# Said in the window, because a colour with no caption is decoration. Six
+# channels, and every one of them is either a SUBSTANCE (something real that
+# moves and is eaten) or a PRESENCE (the fact that a creature is here).
+CHANNEL_WHAT = {
+    "chum":     "SUBSTANCE. Dead matter -- carrion, and the scraps a hunter leaves. Scavengers smell it furthest of anything",
+    "nutrient": "SUBSTANCE. What scavengers leave behind, plus marine snow falling from above. Decomposers live on it",
+    "bloom":    "SUBSTANCE. Plankton, made by decomposers working over nutrient. The slowest channel: a bloom is a place",
+    "swarm":    "PRESENCE. The fact that there are drifters here. Grazers read it. Only written while the drifters are fed",
+    "shoal":    "PRESENCE. The fact that there are grazers here. Hunters read it -- and eating fish quietly erases it",
+    "menace":   "PRESENCE. The fact that there is a hunter here. Reaches about 40 px, and grazers flee it. Nothing eats it",
+}
+
 SPECIES_COLOUR = {
     "scavenger": (255, 168, 64),
     "decomposer": (206, 198, 96),
@@ -112,7 +124,12 @@ SPECIES_SIZE = {
 }
 
 SEEDS = ((250.0, 640.0), (930.0, 470.0), (600.0, 250.0))
-COUNTS = {"scavenger": 10, "decomposer": 12, "drifter": 18, "grazer": 22, "hunter": 5}
+
+# Measured against the pyramid in `creatures.PYRAMID`. At 0.35 the whole web
+# above the decomposers starved -- every scavenger, grazer and hunter sat at
+# condition 0.000 for as long as anybody watched, which is what a playtester
+# saw and reported as "the stalkers are inactive".
+SEEP_RATE = 1.4
 
 RIGS = ("the thruster", "the heater", "the cooler", "the lamp", "the tap")
 
@@ -128,18 +145,17 @@ class Observatory:
 
         self.station = Station((150.0, 210.0))
         self.vent = Vent((930.0, 470.0))
-        self.seeps = [C.Seep(p) for p in SEEDS]
-        self.carcasses = []
-
         self.rng = np.random.default_rng(7)
-        self.packs = {}
-        for kind, n in COUNTS.items():
-            self.packs[kind] = [
-                C.make_cycle(kind, (float(self.rng.uniform(60, WORLD_W - 60)),
-                                    float(self.rng.uniform(60, WORLD_H - 60))))
-                for _ in range(n)
-            ]
-        # A few heat-hunters, so that running a rig has a visible audience.
+
+        self.eco = C.Ecosystem(
+            self.med,
+            seeps=[C.Seep(p, rate=SEEP_RATE) for p in SEEDS],
+            seed=7,
+        )
+        self.packs = self.eco.packs
+        # Heat-hunters are RIGS.md 9 species rather than part of the cycle:
+        # they eat nothing and read the water the player heats. They are here
+        # so that running a rig has an audience.
         self.packs["stalker"] = [
             C.make("stalker", (float(self.rng.uniform(60, WORLD_W - 60)),
                                float(self.rng.uniform(60, WORLD_H - 60))))
@@ -182,20 +198,13 @@ class Observatory:
         self.elapsed += dt
         self._tick += 1
 
-        C.snowfall(self.med, dt, self.rng)
-        for s in self.seeps:
-            s.step(dt, self.med)
-        for b in self.carcasses:
-            b.step(dt, self.med)
-        self.carcasses = [b for b in self.carcasses if not b.spent]
-
         self.station.warm(self.med, dt)
         self.vent.warm(self.med, dt)
 
         sounds = [(self.station.pos.x, self.station.pos.y, 117.0, 1.0)]
-        for kind, pack in self.packs.items():
-            for c in pack:
-                c.step(dt, self.med, sounds)
+        self.eco.step(dt, sounds)
+        for c in self.packs["stalker"]:
+            c.step(dt, self.med, sounds)
 
         # What the player is doing.
         thrust = V(0.0, 0.0)
@@ -312,13 +321,13 @@ class Observatory:
                     pygame.draw.circle(screen, (90, 90, 96), (x, y), r + 3, 1)
 
     def _things(self, screen, small):
-        for s in self.seeps:
+        for s in self.eco.seeps:
             x, y = int(s.pos[0]), int(s.pos[1]) + TOPBAR
             pygame.draw.circle(screen, (120, 190, 140), (x, y), 11, 2)
             pygame.draw.circle(screen, (60, 110, 80), (x, y), 4)
-        for b in self.carcasses:
+        for b in self.eco.carcasses:
             x, y = int(b.pos[0]), int(b.pos[1]) + TOPBAR
-            frac = b.yield_left / C.CARCASS_YIELD
+            frac = min(1.0, b.yield_left / C.CARCASS_YIELD)
             pygame.draw.circle(screen, (210, 90, 60), (x, y), 5)
             pygame.draw.circle(screen, (250, 170, 120), (x, y),
                                int(5 + 9 * frac), 1)
@@ -377,14 +386,18 @@ class Observatory:
         screen.blit(small.render(rig, True, rc), (WIN_W - 14 - small.size(rig)[0], 10))
 
         d = self.diver
+        # The current where the diver actually is, because "why am I drifting"
+        # has to be answerable from the screen.
+        here = d.flow(self.med).length()
         stats = (f"depth {d.pos.y:4.0f} m    over ground {d.speed:5.1f}    "
-                 f"through water {d.speed_through_water(self.med):5.1f} px/s    "
-                 f"trim {d.trim:+.2f}    air {self.economy.air:5.1f}    "
-                 f"pack {self.economy.charge:5.2f}    "
-                 f"{self.station.distance_to(d.pos):4.0f} m from home")
+                 f"through water {d.speed_through_water(self.med):5.1f}    "
+                 f"current here {here:4.1f} px/s    trim {d.trim:+.2f}    "
+                 f"air {self.economy.air:5.1f}    pack {self.economy.charge:5.2f}    "
+                 f"{self.station.distance_to(d.pos):4.0f} m home    "
+                 f"died {self.eco.died}")
         if self.station.docked(d.pos):
             stats += "   DOCKED"
-        screen.blit(small.render(stats, True, DIM), (14, 32))
+        screen.blit(small.render(stats, True, DIM), (14, 30))
 
         # The counts double as the key: same colour on the bar as in the water.
         x = 14
@@ -395,9 +408,9 @@ class Observatory:
             label = f"{kind} {len(self.packs[kind])}"
             screen.blit(small.render(label, True, col), (x + 13, 53))
             x += 26 + small.size(label)[0]
-        note = self._note
-        screen.blit(small.render(note, True, FAINT),
-                    (WIN_W - 14 - small.size(note)[0], 53))
+        # Row four, full width and left aligned, because it now carries a
+        # whole sentence about what the channel on screen actually is.
+        screen.blit(small.render(self._note, True, (150, 170, 178)), (14, 74))
 
     def _help(self, screen, font, small):
         w, h = 640, 430
@@ -469,7 +482,7 @@ class Observatory:
             self._note = (f"running {self.rig_name} into the water"
                           if self.running_rig else "rig off")
         elif k == pygame.K_SPACE:
-            self.carcasses.append(C.Carcass(pos=(self.diver.pos.x, self.diver.pos.y)))
+            self.eco.carcasses.append(C.Carcass(pos=(self.diver.pos.x, self.diver.pos.y)))
             self._note = "a body. press 1 to watch the chum go downtide"
         elif k == pygame.K_LEFTBRACKET:
             self.rig_i = (self.rig_i - 1) % len(RIGS)
@@ -479,26 +492,44 @@ class Observatory:
             self.channel = None
         elif pygame.K_1 <= k <= pygame.K_6:
             self.channel = CHANNELS[k - pygame.K_1]
+            self._note = CHANNEL_WHAT[self.channel]
 
     def click(self, pos, button):
         x, y = pos[0], pos[1] - TOPBAR
         if y < 0:
             return
         if button == 1:
-            self.carcasses.append(C.Carcass(pos=(float(x), float(y))))
+            self.eco.carcasses.append(C.Carcass(pos=(float(x), float(y))))
             self._note = "a body. the scavengers smell it furthest"
         elif button == 3:
-            self.seeps.append(C.Seep((float(x), float(y))))
+            self.eco.seeps.append(C.Seep((float(x), float(y)), rate=SEEP_RATE))
             self._note = "a seep. the food web will find it"
 
 
 def main():
     pygame.init()
     pygame.display.set_caption("RIGS -- the ocean")
-    screen = pygame.display.set_mode((WIN_W, WIN_H))
+
+    # Fit the display. The first build opened a fixed 1200x878 window, which
+    # on a 1204x805 desktop put the ENTIRE top bar off the top of the screen:
+    # every stat, the species key and the channel caption, invisible. The
+    # window is the only way anybody sees any of this, so it has to fit the
+    # screen it is opened on. Everything is drawn at full size onto a canvas
+    # and scaled once on the way out, so no drawing code knows about this.
+    info = pygame.display.Info()
+    avail_w = max(640, info.current_w - 40)
+    avail_h = max(480, info.current_h - 130)
+    scale = min(1.0, avail_w / WIN_W, avail_h / WIN_H)
+    win = (int(WIN_W * scale), int(WIN_H * scale))
+
+    screen = pygame.display.set_mode(win)
+    canvas = pygame.Surface((WIN_W, WIN_H))
     clock = pygame.time.Clock()
     font = _font(18, True)
     small = _font(14)
+    if scale < 1.0:
+        print(f"screen is {info.current_w}x{info.current_h}, "
+              f"so the window is {win[0]}x{win[1]} ({scale:.0%})")
 
     obs = Observatory()
     print("the ocean is settling...")
@@ -515,7 +546,7 @@ def main():
                 else:
                     obs.key(e.key)
             elif e.type == pygame.MOUSEBUTTONDOWN:
-                obs.click(e.pos, e.button)
+                obs.click((e.pos[0] / scale, e.pos[1] / scale), e.button)
 
         keys = pygame.key.get_pressed()
         done = 0
@@ -529,7 +560,11 @@ def main():
                     break
         obs.achieved = done
 
-        obs.draw(screen, font, small)
+        obs.draw(canvas, font, small)
+        if scale < 1.0:
+            pygame.transform.smoothscale(canvas, win, screen)
+        else:
+            screen.blit(canvas, (0, 0))
         pygame.display.flip()
         clock.tick(60)
 

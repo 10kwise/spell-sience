@@ -123,7 +123,13 @@ def test_the_station_is_warm_and_that_has_consequences():
     row, col = med._cell(HOME[0], HOME[1] - 8.0)
     here = float(med.temp[row, col])
     far = float(med.temp[row, 4])
-    check("the hull leaks heat into the water", here > far + 1.0,
+    # 0.8, not 1.0. `field.OCEAN_RELAX` gave the medium a heat sink -- the
+    # ocean outside the window -- because without one a station warmed the
+    # whole domain forever and the currents grew all session. A plume against
+    # a sink is slightly cooler than a plume against nothing: this reads 6.21
+    # vs 5.27 where it used to read 6.44 vs 5.40. The claim is unchanged and
+    # the margin is still nearly a degree; only the calibration moved.
+    check("the hull leaks heat into the water", here > far + 0.8,
           f"{here:.2f} C at the door vs {far:.2f} C far off")
     _report("at the door", f"{here:6.2f} C")
     _report("far away, same depth", f"{far:6.2f} C")
