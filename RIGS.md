@@ -940,6 +940,90 @@ heavy thermal work — so it is worth walking to and it does not end the
 economy. And tapping it **cools it by 1.02 °C** against an untapped one,
 because taking power out of the water means the water has less.
 
+### 12.7 Movement, because the ocean had no velocity
+
+The diver flew. It had drag and a buoyancy term and everything else about it
+was an object in a vacuum with the numbers turned down — **drag was measured
+against the ground**, so the ocean might as well have been still, and it was,
+because the medium tracked temperature, gas, bubbles and a sound speed and no
+velocity at all. Water that does not move is not water.
+
+**`Medium.flow_at` invents nothing.** The vertical part is the buoyancy
+`_buoyancy` already applies to heat, read as a speed instead of as a
+transport. The horizontal part is not modelled, it is *deduced*: the flow is
+incompressible, so `du/dx = -dv/dy`, and integrating that along each row gives
+the only horizontal flow consistent with the vertical one. That single
+constraint is what makes a plume a plume — warm water going up over a vent has
+to be replaced, so there is an inflow beneath it and **a sinking return limb
+beside it**. A test that assumed "away from the vent means nothing happens"
+found the diver sinking 90 px. That is not a bug, it is a convection cell, and
+a vent is not a hazard at a point but a circulation you have to navigate.
+
+Four things separate swimming from flying, and all four are now there:
+
+| | measured |
+|---|---|
+| **Drag reads speed through the WATER** | drifting: 5.02 px/s over the ground, 0.65 through the water. The same push carries you 258 px downstream and 163 px up |
+| **Added mass** — you drag a comparable mass of water with you, so you accelerate as though twice as heavy while weighing what you weigh | 2.5 s to reach cruise, 5.9 s to coast down |
+| **Anisotropy** — a diver is a long thing, and broadside it is a sail | 158 px pointed, 102 px broadside: **pointing is worth 55%** |
+| **Trim** — a bladder: slow, free to hold, silent, vertical | 1.8 s to fill, 9.7 px/s climb, and holding costs nothing |
+
+Added mass is the one that matters most and it is the one no amount of drag
+tuning reproduces: **drag punishes speed, added mass punishes change.**
+
+And a sheared background drift with a slow tide, which hands §9.1 one more
+channel: 5.67 px/s at 40 m, 0.18 px/s at 700 m. **The shallows push you around
+and the deep is your own problem** — so travel is a negotiation up top, and
+down below the only thing moving you is what you built.
+
+`KICK` had to change. It was 240 px/s² against an honest rig's 30, which made
+flailing **four times faster** than the machine §8 exists to make you build,
+and that inverted the premise of the entire game. At 4.0 a kick settles at
+5.5 px/s against a rig's 23 — and just above the 5.7 px/s surface drift, so
+crawling upstream in the shallows is the complete list of things flailing is
+for.
+
+**One real bug, and it had been there all along.** `_buoyancy` compared a
+*bilinear* density sample against a *single row's* mean. Those are not the
+same quantity — they differ by the stratification itself — so an undisturbed
+column reported a 7 kg/m³ anomaly that flipped sign twice per cell, and a
+diver trimmed to hover bobbed. It was invisible until trim made vertical
+motion slow enough to watch. `Medium.density_anomaly_at` is now the one
+definition, and still water is still to 1e-9.
+
+### 12.8 The station is a place, not a menu
+
+A place that is simply *safe* is a menu with a position, so the station is
+built out of the same physics as everything else and the consequences are
+allowed to be inconvenient.
+
+**It is warm**, because a pressurised hull full of people leaks heat, and heat
+in water does what heat in water does. So:
+
+| | |
+|---|---|
+| the water at the door | 6.44 °C against 5.40 °C far off |
+| a heat-hunting stalker's comfort there | **1.72**, against 1.00 in open water |
+| holding still at the door for 8 s | **+85 px straight up** — home has weather |
+| a refrigerator run at home | 3.37 °C out, against 2.72 °C the same rig makes 560 m away |
+
+The safest place in the ocean is therefore the most conspicuous thing in it on
+every channel a creature uses, there is a permanent updraft over the door, and
+the cold you make at home is not as cold. Nobody authored any of that.
+
+**Free power has a radius, and it is 300 m.** `sources.Source` already said
+what a source is; the station is one with a big rate and a short reach. Four
+seconds of thrusting leaves you at 97.6 air at the door and 36.9 air six
+hundred metres out. That is §3.1's entire progression curve expressed as a
+distance, and everything interesting happens outside the circle.
+
+**A dive that can end came off the list on purpose.** It was on it in §12.2.
+A run that ends is a structure imposed on top of the simulation, and
+everything good in this project has come from letting the simulation say what
+happens instead. The station is a place you want to be near; that is enough of
+a rule, and air coming back at a rate rather than instantly is enough of a
+clock.
+
 ### 12.6 What the suites say now
 
 | suite | |
@@ -950,8 +1034,11 @@ because taking power out of the water means the water has less.
 | `selftest_density` | **9/9** |
 | `selftest_creatures` | **20/20** |
 | `selftest_selfpower` | **15/15** — the loop through the ocean, run rather than argued |
+| `selftest_station` | **18/18** |
+| `selftest_swim` | **28/28** |
+| `selftest_diver` | 10/10 |
 
-**129 checks**, against 80 before this pass.
+**175 checks**, against 80 when this pass started.
 
 Still missing before this is a game: the station, and a dive that can end.
 And the second go/no-go question in §12 is still open, because it is the one a
