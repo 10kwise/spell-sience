@@ -6,23 +6,39 @@ machine that pushes you is a worse version of a key you already have. 8 says
 propulsion is *drawn* -- a mouth firing behind you -- and this is that,
 plus the three things that make water feel like water rather than like air.
 
-**Drag.** Quadratic, so there is a terminal speed and letting go coasts to a
-stop instead of stopping dead. This is most of the feel: you arrive somewhere
-by deciding to stop early.
+**Drag, measured against the WATER.** Quadratic, so there is a terminal speed
+and letting go coasts to a stop instead of stopping dead. Measured against the
+water rather than against the ground, which is the difference between a
+current being scenery and a current being a force: drifting with it is free,
+crossing it is not, and neither needed a rule.
 
-**Buoyancy.** You have a density and so does the water, and 7's medium
-already tracks its own. Warm water is lighter, so a vent's plume *lifts*
-you -- which means the best place to stand for power is also a place that
-will not let you stand still. Nobody designed that; it is what putting heat
-in water does, and 8.1 already said the same interaction bends your pings.
+**Added mass.** Push a body through water and you push a comparable mass of
+water along with it, so it accelerates as though it were twice as heavy while
+weighing exactly what it weighed. This is not a fudge and it is not friction
+-- it is the single biggest reason underwater movement *feels* underwater:
+everything you do arrives late and leaves slowly, and no amount of drag
+tuning reproduces it, because drag punishes speed and added mass punishes
+CHANGE.
 
-**Thrust.** Every front a mouth throws pushes back. A wide mouth firing
-astern is a shove; a spitter is a kick.
+**Anisotropy.** A diver is a long thing. Pointed the way you are going you
+have a third of the drag you have broadside, so aiming where you travel is a
+skill rather than a formality, and turning while fast is expensive.
+
+**Buoyancy and trim.** You have a density and so does the water, and 7's
+medium already tracks its own. Warm water is lighter, so a vent's plume
+*lifts* you -- the best place to stand for power will not let you stand
+still. And you carry a bladder: trim is slow, nearly free, and the only way
+to change depth without spending anything, which makes it the exact opposite
+of thrust in every respect that matters.
+
+**Thrust.** Every front a mouth throws pushes back; every port a rig ejects
+through pushes back harder and honestly.
 
 One number here is a lie and it is named: real acoustic radiation pressure
 could not move a diver, so `THRUST_PER_ENERGY` scales it to something a game
 can be played with. It is the only such number in this file -- drag,
-buoyancy and the current all fall out of quantities the medium already has.
+buoyancy, added mass and the current all fall out of quantities the medium
+already has.
 """
 
 import math
@@ -52,20 +68,71 @@ THRUST_PER_ENERGY = 1300.0
 # newtons rather than a scaled energy, and it is a person rather than a knob.
 DIVER_MASS = 90.0         # kg
 
-# Quadratic drag: F = -k |v| v. Water, not air -- the point is that speed is
-# expensive and stopping is free.
-DRAG = 0.0135
-DRAG_LINEAR = 0.9
+# Added mass, as a fraction of your own. A bluff body dragging water with it
+# has an added-mass coefficient near 1, so you accelerate as though you were
+# about twice as heavy -- and you still WEIGH what you weighed, so buoyancy is
+# unaffected and only *changes* of motion are slowed.
+#
+# It is applied to the sum of the accelerations rather than to any one force,
+# because that is what it is: the water does not care which force is pushing.
+ADDED_MASS = 1.0
+
+# Quadratic drag: F = -k |v| v, and `v` is measured relative to the WATER.
+# Two coefficients because a diver is not a sphere -- streamlined along your
+# own axis, broadside across it.
+#
+# ALONG is exactly the single coefficient this file used before, and that is
+# deliberate rather than lazy: anisotropy is added by making BROADSIDE WORSE,
+# not by making streamlined better. The other way round silently re-tunes
+# every number already measured against the old drag -- the first attempt
+# lowered it to 0.008 and a constant push stopped reaching a terminal speed at
+# all, because the diver hit MAX_SPEED first and drag was no longer the thing
+# limiting anybody. A speed cap that binds is a bug wearing a constant's name.
+DRAG_ALONG = 0.038
+DRAG_ACROSS = 0.114
+# Deliberately small. The linear term is what a low-Reynolds-number ooze looks
+# like and water is not one; with it at 0.9 it swamped both quadratic terms at
+# every speed anyone actually travels, so pointing where you were going bought
+# 18% and might as well not have existed. At 0.35 the quadratic terms are the
+# ones doing the work, which is both correct for a body this size and what
+# makes a diver GLIDE rather than trudge.
+DRAG_LINEAR = 0.35
 
 # You are close to neutrally buoyant, which is what a diver trims for. The
 # gain is what turns a small density difference into a felt drift.
 DIVER_DENSITY = 1000.4
 BUOYANCY_GAIN = 210.0
-CURRENT_GAIN = 165.0
+
+# The bladder. Slow to change, free to hold, and it is the only way to change
+# depth that does not spend anything -- so it is the opposite of thrust on
+# every axis: thrust is fast, expensive, loud and horizontal by habit; trim is
+# slow, cheap, silent and vertical.
+#
+# The rate is the interesting number rather than the gain. A real diver adds
+# gas in small bursts and waits, and getting that wait wrong is how people
+# end up on the surface with a headache; making the CHANGE slow rather than
+# the effect weak is what reproduces it.
+TRIM_GAIN = 14.0          # px/s^2 at full inflation
+TRIM_RATE = 0.55          # how much of full travel per second
+TRIM_AIR_PER_SEC = 0.9    # only while you are actually changing it
 
 # A flutter kick. Deliberately weak and deliberately expensive: it exists so
 # a player who has drawn nothing is not stuck, not so they can travel by it.
-KICK = 240.0
+# Sized against the rig rather than against nothing. `rig_thrust` is honest
+# now -- 2719 N on a 90 kg diver is 30 px/s^2 -- and against that a KICK of
+# 240 made flailing FOUR TIMES FASTER than the machine you were supposed to
+# build, which inverts the entire premise of SUBMERGED 8. At 9.0 a sustained
+# kick tops out around 9 px/s against a basic thruster's 24, which leaves it
+# doing exactly the job it is described as doing: it will just barely get you
+# out of a surface current, and it will not get you anywhere.
+#
+# 9.0 was still not enough separation -- it topped out at 11.5 px/s against
+# the rig's 23, and a factor of two is a choice rather than a verdict. At 4.0
+# a kick settles at 6.6 px/s, which is three and a half times slower than the
+# cheapest rig and *just* above the 5.7 px/s surface drift: you can crawl
+# upstream in the shallows by flailing, and that is the entire list of things
+# flailing is for.
+KICK = 4.0
 KICK_AIR_PER_SEC = 4.2
 
 MAX_SPEED = 260.0
@@ -78,6 +145,13 @@ class Diver:
         self.aim = V(1.0, 0.0)
         self.last_thrust = V(0.0, 0.0)
         self.kicking = False
+        # -1 fully vented (sink), +1 fully inflated (rise), 0 neutral.
+        self.trim = 0.0
+        self.trim_target = 0.0
+        # What the water was doing last step, kept so a HUD can show you the
+        # thing that is pushing you around.
+        self.last_flow = V(0.0, 0.0)
+        self.last_drag = V(0.0, 0.0)
 
     # -- forces --------------------------------------------------------
     def _buoyancy(self, medium) -> V:
@@ -88,40 +162,77 @@ class Diver:
         plume, a cold pocket -- actually moves you. Otherwise every dive is
         one long fight with the profile."""
         try:
-            here = medium.density(self.pos.x, self.pos.y)
+            # One definition of "unusual water", and it lives in the medium.
+            # This used to be a bilinear density sampled here minus a single
+            # row's mean, which are not the same quantity and differ by the
+            # stratification itself -- see `Medium.density_anomaly_at`.
+            anomaly = -medium.density_anomaly_at(self.pos.x, self.pos.y)
         except Exception:
             return V(0.0, 0.0)
-        row = int(min(max(self.pos.y / medium.cell_size, 0), medium.ny - 1))
-        ambient = float(medium.density_field[row].mean())
-        # Positive when the water here is lighter than the rest of its layer.
-        anomaly = ambient - here
-        return V(0.0, -anomaly * BUOYANCY_GAIN)
+        # Both terms are NEGATIVE for up, because +y is down. Written with
+        # the wrong sign on trim, a full bladder sank you at 30 px/s.
+        lift = -anomaly * BUOYANCY_GAIN - self.trim * TRIM_GAIN
+        return V(0.0, lift)
 
-    def _current(self, medium) -> V:
-        """Water moves where density says it should -- but only where the
-        density is *unusual for its depth*.
+    def flow(self, medium) -> V:
+        """What the water here is doing, in px/s.
 
-        The first version took the raw gradient, which in a stratified ocean
-        is dominated by the stratification itself: heavy water below light
-        water everywhere, always, by design. It read that as a permanent
-        updraft and floated a motionless diver 193 px through still water
-        with nothing acting on them. A stable column produces no flow. Only
-        an anomaly does, so the gradient is taken of the anomaly field --
-        density minus the mean at that depth -- which is exactly zero in
-        water that is merely layered and non-zero around a plume."""
+        This replaced `_current`, which took the gradient of the density
+        anomaly and called it a velocity. That was a stand-in for a field the
+        medium did not have; it does now (`Medium.flow_at`), it is derived
+        from the same buoyancy the medium already applies to heat, and its
+        horizontal half is deduced from continuity rather than guessed -- so a
+        plume has an inflow underneath it because it has to, not because
+        anybody drew one.
+        """
         try:
-            cs = medium.cell_size
-            r = int(min(max(self.pos.y / cs, 1), medium.ny - 2))
-            c = int(min(max(self.pos.x / cs, 1), medium.nx - 2))
-            d = medium.density_field
-            rows = d[r - 1:r + 2]
-            anom = rows - rows.mean(axis=1, keepdims=True)
-            dx = float(anom[1, c + 1] - anom[1, c - 1])
-            dy = float(anom[2, c] - anom[0, c])
+            u, v = medium.flow_at(self.pos.x, self.pos.y)
         except Exception:
             return V(0.0, 0.0)
-        # Flow runs from heavy toward light along the anomaly.
-        return V(-dx, -dy) * CURRENT_GAIN
+        return V(float(u), float(v))
+
+    def _drag(self, relative) -> V:
+        """Quadratic drag on the velocity RELATIVE TO THE WATER, split into
+        the direction you are pointing and the direction you are not.
+
+        The whole current system is this one word `relative`. Water moving
+        past you is what slows you; water carrying you is not. Sitting still
+        in a 20 px/s current means moving at 20 px/s over the ground for free,
+        and holding station in it costs continuously -- which is the correct
+        answer to both and needed no rule for either.
+        """
+        speed = relative.length()
+        if speed < 1e-6:
+            return V(0.0, 0.0)
+        axis = V(self.aim)
+        if axis.length_squared() < 1e-12:
+            axis = V(1.0, 0.0)
+        axis = axis.normalize()
+
+        along = relative.dot(axis)
+        along_v = axis * along
+        across_v = relative - along_v
+
+        f = -(along_v * (DRAG_ALONG * abs(along))
+              + across_v * (DRAG_ACROSS * across_v.length())
+              + relative * DRAG_LINEAR)
+        return f
+
+    def set_trim(self, target: float) -> None:
+        """Ask for a bladder setting. It arrives when it arrives."""
+        self.trim_target = max(-1.0, min(1.0, float(target)))
+
+    def _step_trim(self, dt: float, economy=None) -> None:
+        want = self.trim_target - self.trim
+        if abs(want) < 1e-4:
+            self.trim = self.trim_target
+            return
+        step = TRIM_RATE * dt
+        self.trim += max(-step, min(step, want))
+        # Changing trim means moving gas, and gas is air. Holding costs
+        # nothing, which is why trim is what you use when you have time.
+        if economy is not None:
+            economy.air = max(0.0, economy.air - TRIM_AIR_PER_SEC * dt)
 
     def rig_thrust(self, result, direction) -> V:
         """Acceleration from a RIG's port, in px/s^2. RIGS.md 10.
@@ -177,14 +288,21 @@ class Diver:
 
     # -- integration ---------------------------------------------------
     def step(self, dt, medium, thrust=V(0.0, 0.0), kick=V(0.0, 0.0),
-             bounds=None):
-        acc = V(thrust) + V(kick) + self._buoyancy(medium) + self._current(medium)
+             bounds=None, economy=None):
+        self._step_trim(dt, economy)
 
-        speed = self.vel.length()
-        if speed > 1e-6:
-            drag = self.vel.normalize() * -(DRAG * speed * speed
-                                            + DRAG_LINEAR * speed)
-            acc += drag
+        flow = self.flow(medium)
+        self.last_flow = flow
+        relative = self.vel - flow
+        drag = self._drag(relative)
+        self.last_drag = drag
+
+        acc = V(thrust) + V(kick) + self._buoyancy(medium) + drag
+        # Added mass divides the SUM, because the water being dragged along
+        # does not care which force is doing the dragging. Buoyancy is in here
+        # too and that is correct: a lift you cannot accelerate into arrives
+        # just as late as a push you cannot accelerate into.
+        acc /= (1.0 + ADDED_MASS)
 
         self.vel += acc * dt
         if self.vel.length() > MAX_SPEED:
@@ -213,3 +331,12 @@ class Diver:
     @property
     def speed(self) -> float:
         return self.vel.length()
+
+    def speed_through_water(self, medium) -> float:
+        """How fast you are actually swimming, which is not how fast you are
+        going. The number that costs you something."""
+        return (self.vel - self.flow(medium)).length()
+
+    def drift(self, medium) -> V:
+        """The part of your motion the water is doing for you."""
+        return self.flow(medium)

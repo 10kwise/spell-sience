@@ -140,6 +140,50 @@ MAX_EXCHANGE = 0.4    # a full swap in one step would ring
 GAS_HENRY = 0.02              # saturation fraction per bar
 GAS_TEMP_GAIN = 0.03          # per degree above REFERENCE_TEMP
 GAS_INITIAL_SATURATION = 0.9  # start every cell quietly under-saturated
+
+# --- the water moves ---------------------------------------------------------
+#
+# Until this block the ocean had temperature, gas, bubbles and a sound speed,
+# and no VELOCITY -- so a diver's drag was measured against the ground and
+# swimming was identical to flying with the numbers turned down. Water that
+# does not move is not water.
+#
+# Nothing new is invented. The vertical part is the buoyancy `_buoyancy`
+# already applies to heat, read as a speed instead of as a transport; the
+# horizontal part is whatever CONTINUITY requires, because the flow is
+# incompressible and the books have to close in space the same way the rig's
+# close in energy. That single constraint is what makes a plume a plume: warm
+# water going up over a vent has to be replaced, so there is an inflow at the
+# bottom and an outflow at the top, and nobody drew it.
+#
+# It is read against the mean at each depth for exactly the reason `diver.py`
+# already learned the hard way: an ordinary stratified column has heavy water
+# under light water everywhere, always, by design, and reading the raw
+# gradient turns that into a permanent updraft. A stable column is STILL. Only
+# an anomaly moves.
+#
+# CHOSEN, in the tradition of GRADIENT_EXAGGERATION and COMPRESSION_GAIN: the
+# relationship is real and the magnitude is a game's. At an honest scale a
+# plume rises at a fraction of a pixel per second against a diver who
+# cruises at 24, so the water would be moving and nobody would ever notice.
+# This puts a vent's updraft at about a third of cruising speed.
+BUOYANT_FLOW = 4.0        # px/s of rise per kg/m^3 the water is light by
+
+# The background drift, and the two things that make it interesting.
+#
+# Real oceans are sheared: a wind-driven surface layer runs fast and the deep
+# is nearly still. So shallow water pushes you around and deep water does not,
+# which hands RIGS.md 9.1's "depth flips the sign" one more channel without
+# anybody adding a rule -- the shallows are where travel is cheap in one
+# direction and expensive in the other, and the deep is where you are on your
+# own.
+#
+# And it turns, slowly. A tide means "the current is against me" is a thing
+# you can wait out rather than only a thing you pay for, which is the
+# difference between a hazard and a system.
+DRIFT_SURFACE = 7.0       # px/s at the surface
+DRIFT_DECAY_M = 190.0     # e-folding depth of the sheared layer
+TIDE_PERIOD_S = 240.0     # how long until it runs the other way
 OUTGAS_RATE = 2.0             # fraction of the excess shed per second
 
 NUCLEATION_RADIUS = 0.004  # m, the radius a shed bubble takes at 1 bar
@@ -266,6 +310,9 @@ class Medium:
         self.bubble_radius[:] = self._nucleation_radius
 
         self._dirty = True
+        # The tide needs a clock, and this is the only stateful thing in the
+        # medium that is not a field. `step` advances it.
+        self.elapsed = 0.0
         self.set_temperature_profile(default_temperature_profile)
 
     # --- derived fields -----------------------------------------------------
@@ -307,6 +354,75 @@ class Medium:
         ratio = 1.0 / (np.sqrt(mixture_density * compressibility) * clear)
         return np.where(self.bubbles > 0.0, ratio, 1.0)
 
+    def _compute_flow(self):
+        """(u, v) in px/s per cell. Buoyancy, closed by continuity.
+
+        Sign convention, stated because getting it wrong is invisible: row 0
+        is the surface and +v is DOWNWARD, so light water -- a negative
+        density anomaly -- gets a negative v and rises.
+
+        The horizontal component is not modelled, it is DEDUCED. For an
+        incompressible field du/dx = -dv/dy, so integrating that along each row
+        gives the only horizontal flow consistent with the vertical one. The
+        row mean is removed afterwards because the integration constant is free
+        and a non-zero one would be a phantom drift across the whole domain.
+        """
+        anomaly = self._rho - self._layer
+        v = BUOYANT_FLOW * anomaly
+        v = np.where(self.solid, 0.0, v)
+
+        dvdy = np.gradient(v, self.cell_size, axis=0)
+        u = -np.cumsum(dvdy, axis=1) * self.cell_size
+        u -= u.mean(axis=1, keepdims=True)
+
+        # The sheared background layer, and the tide that turns it.
+        depth = self.depth_m
+        phase = math.cos(2.0 * math.pi * self.elapsed / TIDE_PERIOD_S)
+        u = u + DRIFT_SURFACE * np.exp(-depth / DRIFT_DECAY_M) * phase
+
+        u = np.where(self.solid, 0.0, u)
+        return u, v
+
+    def density_anomaly_at(self, x: float, y: float) -> float:
+        """kg/m^3 this water differs from the rest of its own depth by.
+
+        NEGATIVE means lighter than its layer, and lighter is what rises.
+
+        Exactly zero in an ordinary stratified column, at every position and
+        not merely at cell centres -- which sounds too obvious to state and was
+        not. `diver._buoyancy` compared a BILINEAR sample of the density
+        against a SINGLE ROW's mean, so between one row centre and the next it
+        read a difference that was pure stratification, flipped sign twice per
+        cell, and reached 7 kg/m^3 in water where nothing had happened. A diver
+        trimmed to hover bobbed instead, and it was invisible until trim made
+        vertical motion slow enough to watch.
+
+        One definition, in the medium, used by everything that needs it.
+        """
+        self._ensure_derived()
+        return (self._bilinear(self._rho, x, y)
+                - self._bilinear(self._layer, x, y))
+
+    @property
+    def flow_field(self):
+        """Live (u, v) per cell, in px/s. For a renderer that wants to draw
+        the water moving, and for anything that has to swim in it."""
+        self._ensure_derived()
+        return self._u, self._v
+
+    def flow_at(self, x: float, y: float):
+        """(u, v) in px/s at a world position, bilinear. What the water is
+        doing where you are, which is the velocity every drag law in this
+        project should be measured against."""
+        self._ensure_derived()
+        return (self._bilinear(self._u, x, y), self._bilinear(self._v, x, y))
+
+    def flow_at_many(self, xs, ys):
+        """Vectorised `flow_at`, for creatures and particles."""
+        self._ensure_derived()
+        weights = self._sample_weights(xs, ys)
+        return self._gather(self._u, weights), self._gather(self._v, weights)
+
     @property
     def density_field(self):
         """Live kg/m^3 per cell, for a renderer that wants to draw the layers.
@@ -326,6 +442,14 @@ class Medium:
         if not self._dirty:
             return
         self._rho = self._compute_density()
+        # What the density WOULD be with no anomalies: the mean at each depth,
+        # spread back across the row. Everything that asks "is this water
+        # unusual" has to compare against this rather than against a constant,
+        # because an ordinary stratified column is heavy-under-light
+        # everywhere by design and is not unusual anywhere.
+        self._layer = np.broadcast_to(
+            self._rho.mean(axis=1, keepdims=True), self._rho.shape)
+        self._u, self._v = self._compute_flow()
         real = _c_real(self.temp, self.salinity, self.depth_m)
         exaggerated = C_REFERENCE + GRADIENT_EXAGGERATION * (real - C_REAL_REFERENCE)
         # Wood's collapse multiplies the finished field rather than joining the
@@ -582,10 +706,13 @@ class Medium:
         dt = float(dt)
         if dt <= 0.0:
             return
+        self.elapsed += dt
         self._diffuse_heat(dt)
         self._buoyancy(dt)
         self._shed_gas(dt)
         self._rise_bubbles(dt)
+        # The tide moves even when nothing else does, so the flow field is
+        # stale after every step regardless of whether a cell changed.
         self._dirty = True
 
     def _neighbours(self, field):

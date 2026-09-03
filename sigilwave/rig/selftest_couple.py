@@ -272,11 +272,22 @@ def test_thrust_is_momentum_flux():
             d.step(1.0 / 60.0, med, thrust=acc, bounds=(640, 480))
         moved[name] = (d.pos - pygame.Vector2(600.0, 200.0)).length()
 
+    # A CONTROL, carrying no rig at all. It did not need one while the ocean
+    # stood still; it does now, because the water moves and moves you with it
+    # (`Medium.flow_at`). Without this the heater "moved 3.2 px" and the test
+    # read that as thrust from a machine that makes none, when it was the
+    # current doing exactly what a current is supposed to do.
+    drifter = Diver((600.0, 200.0))
+    for _ in range(240):
+        drifter.step(1.0 / 60.0, med, bounds=(640, 480))
+    moved["nothing at all"] = (drifter.pos
+                               - pygame.Vector2(600.0, 200.0)).length()
+
     check("a jet moves the diver, in SUBMERGED's own measured band",
           60.0 < moved["the thruster"] < 200.0,
           f"{moved['the thruster']:.1f} px in 4 s")
-    check("and a machine that makes no jet moves them not at all",
-          moved["the heater"] < 1.0,
+    check("and a machine that makes no jet adds nothing to the drift",
+          abs(moved["the heater"] - moved["nothing at all"]) < 0.05,
           f"{moved['the heater']:.1f} px")
     for name, px in moved.items():
         _report(name, f"{px:.1f} px in 4 s")
