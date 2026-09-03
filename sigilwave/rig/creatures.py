@@ -75,6 +75,45 @@ MAX_SPEED = 90.0
 # Only creatures that forage do this -- see the gate in `step`.
 WANDER = 0.35
 
+# How fast a heat-hunter stops noticing heat it has been sitting in, per
+# second. About a thirty-second time constant.
+#
+# THIS IS WHY A STALKER LEAVES THE VENT, and it took three playtest reports of
+# "the stalkers are stuck to the vent" to get here. The first two fixes were
+# both real and neither was enough: a saturating clamp gave them a gradient of
+# exactly zero, and having no search behaviour left them motionless at a
+# maximum. The thing underneath both is that A VENT IS ALWAYS THE WARMEST
+# THING IN THE OCEAN, so any creature that simply climbs temperature ends up
+# on it and has no reason ever to leave.
+#
+# Real senses adapt: they report CHANGE, not level. A stalker now reads the
+# anomaly against what it has recently been sitting in, which makes a vent
+# boring after half a minute and makes the fresh heat of a rig that just
+# switched on the most interesting thing in the water. That is the creature
+# RIGS.md 9 wanted -- one that hunts what the player is doing, rather than one
+# that decorates the nearest hot rock.
+HABITUATION = 0.033
+
+# What counts as "plenty of heat", in degC of anomaly. Sitting in this much
+# drives satiation to 1 within a few time constants.
+#
+# SATIATION SCALES THE GAIN. It does not shift the input, and the difference
+# is the whole fix. Subtracting an adapted baseline from the anomaly was the
+# obvious thing and it made matters worse: a stalker on a vent reads the vent
+# as neutral, but it then reads everywhere ELSE as colder than what it is used
+# to, so the vent still wins by a factor of thirty and three of four stalkers
+# were still parked on it after ten minutes. Measured: comfort 1.77e-2 on the
+# vent against 6.4e-4 at 250 px.
+#
+# Scaling the gain instead takes the heat term smoothly out of the product
+# altogether. A satiated stalker has no thermal opinion at all, its comfort
+# goes flat, its patrol takes over and it wanders off -- and as it leaves,
+# satiation decays until heat matters again. That is a creature that circulates
+# between the warm things in an ocean instead of choosing one and dying of old
+# age on it, and it is what makes a rig switching on the most interesting event
+# in the water.
+SATIATION_AT = 3.0
+
 # How fast condition falls when a creature is not eating, per second, and how
 # much one unit of food restores.
 #
@@ -241,6 +280,10 @@ class Creature:
     # while everything below them was full.
     condition_decay: float = CONDITION_DECAY
 
+    # How thoroughly this creature has had its fill of heat, 0 to 1.
+    # See HABITUATION and SATIATION_AT.
+    heat_baseline: float = 0.0
+
     def __post_init__(self):
         # Seeded from where it starts, so a shoal does not cast about in
         # unison, and so a run is reproducible without an RNG anywhere in
@@ -300,8 +343,27 @@ class Creature:
             # like a logarithm, so exp(gain * asinh(a)) rises like a power law
             # instead of an exponential: no clamp, no overflow, and no flat
             # spot anywhere a creature can reach.
-            a = self._anomaly(medium, row, col)
-            c *= math.exp(self.heat_hunter * math.asinh(a))
+            # Satiation runs the gain from +1 through zero to -1, and the
+            # negative half is the part that actually moves anything.
+            #
+            # Merely muting the sense was the previous attempt: at satiation
+            # 1.0 the heat term left the product entirely, comfort went flat,
+            # and a flat field gives a zero gradient -- so the stalkers had no
+            # thermal opinion and also no reason to go anywhere, and they
+            # orbited the vent at 24 px for as long as anybody watched. A
+            # creature that has had enough of something does not become
+            # indifferent to it, it wants to get AWAY from it, and that is a
+            # direction. So a full stalker is repelled by the vent it is
+            # sitting on, leaves, loses its satiation on the way out, and
+            # comes back interested. It circulates.
+            #
+            # In water with no anomaly in it this term is 1.0 whatever the
+            # satiation, so the controls in `selftest_creatures` still see a
+            # creature that stays where it was put.
+            gain = self.heat_hunter * (1.0 - 2.0 * self.heat_baseline)
+            if abs(gain) > 1e-6:
+                a = self._anomaly(medium, row, col)
+                c *= math.exp(gain * math.asinh(a))
 
         # The cycle uses a POWER law rather than the exponential above, and
         # that difference was measured rather than chosen.
@@ -388,6 +450,17 @@ class Creature:
         # particular, which is what `selftest_creatures` [7] actually needs --
         # that a creature with nothing to read has no BIAS, not that it is
         # frozen.
+        # A forager sweeps wide; everything else patrols tight.
+        #
+        # Widening the patrol when the gradient goes flat was tried, to get
+        # satiated stalkers off the vent, and it had to be reverted: it broke
+        # three CONTROL conditions in `selftest_creatures` at once. Those
+        # controls are the reason the suite means anything -- a creature with
+        # no pocket and no curtain near it has to stay put, or "the cold
+        # pocket drew it" stops being a claim about the pocket. Measured: the
+        # baited run moved +100 px and the unbaited control +101. A wandering
+        # control is a dead test. The stalker problem is solved in `comfort`
+        # instead, where it belongs, by making satiation directional.
         turn = 0.6 if self.reads else 2.4
         self.wander_phase += dt * turn
         vx += math.cos(self.wander_phase) * self.speed * dt * 4.0 * WANDER
@@ -421,6 +494,13 @@ class Creature:
         # read the channel it emits. Self-attraction is a positive feedback
         # with no opposing term, and a creature that can smell itself stops
         # where it is and calls that comfort.
+        if self.heat_hunter:
+            hrow, hcol = medium._cell(nx, ny)
+            here = self._anomaly(medium, hrow, hcol)
+            want = min(1.0, max(0.0, here / SATIATION_AT))
+            self.heat_baseline += ((want - self.heat_baseline)
+                                   * min(1.0, HABITUATION * dt))
+
         ate = 0.0
         if self.reads and self.feed_rate > 0.0:
             ate = medium.consume(self.reads, nx, ny, self.feed_rate * dt)
@@ -763,6 +843,17 @@ class Ecosystem:
         return (float(self.rng.uniform(40, self.medium.width - 40)),
                 float(self.rng.uniform(40, self.medium.height - 40)))
 
+    def _recruit_near(self):
+        """Somewhere within reach of a source, rather than anywhere at all."""
+        anchors = [s.pos for s in self.seeps] + [b.pos for b in self.carcasses]
+        if not anchors:
+            return self._somewhere()
+        ax, ay = anchors[int(self.rng.integers(len(anchors)))]
+        r = float(self.rng.uniform(120.0, 320.0))
+        th = float(self.rng.uniform(0.0, 6.283185))
+        return (min(max(ax + r * math.cos(th), 30.0), self.medium.width - 30.0),
+                min(max(ay + r * math.sin(th), 30.0), self.medium.height - 30.0))
+
     def all_creatures(self):
         for pack in self.packs.values():
             for c in pack:
@@ -792,15 +883,26 @@ class Ecosystem:
             return
         del self._starving[key]
         self.died += 1
+        # Bodies are not identical, so they do not fall at one speed. A rank
+        # of carcasses descending in perfect formation is the kind of detail
+        # that reads as a simulation rather than as an ocean, and it was
+        # noticed from play before it was noticed anywhere else. Half to
+        # double, which is roughly what a spread of sizes and gas content does.
         self.carcasses.append(Carcass(
             pos=(c.pos[0], c.pos[1]),
             yield_left=CARCASS_YIELD * CARCASS_OF_A_CREATURE,
             rate=CARCASS_YIELD * CARCASS_OF_A_CREATURE / CARCASS_SECONDS,
+            sink_speed=2.5 * float(self.rng.uniform(0.5, 2.0)),
         ))
-        # Recruited from outside the window, half fed, somewhere else.
-        c.pos = self._somewhere()
+        # Recruited from outside the window -- but toward what it eats,
+        # rather than into a random corner. Dropping recruits uniformly meant
+        # a steady trickle arriving in dead water at the edges and starving
+        # again inside a minute, which from outside reads as "death only ever
+        # happens at the edges". A thing that swims in from the open ocean
+        # arrives somewhere it can live.
+        c.pos = self._recruit_near()
         c.vel = (0.0, 0.0)
-        c.condition = 0.5
+        c.condition = 0.75
 
 
 # A real pyramid: the things that get eaten outnumber the things that eat

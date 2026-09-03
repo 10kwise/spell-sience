@@ -77,6 +77,21 @@ DIVER_MASS = 90.0         # kg
 # because that is what it is: the water does not care which force is pushing.
 ADDED_MASS = 1.0
 
+# How much of the local current a diver actually feels.
+#
+# `Medium.flow_at` is the mean velocity of a 16 m by 16 m parcel of ocean. A
+# diver is not a parcel of ocean: he is a compact body a couple of metres
+# across, he is kicking, and he can hold onto things. Taking the cell mean as
+# the speed of the water on his skin overstates it, and in play the result was
+# that crossing an ordinary plume felt like a fight rather than a cost --
+# reported twice, in those words.
+#
+# 0.55 leaves every ranking in RIGS.md 12.7 intact: drifting is still nearly
+# free, crossing still costs, and the sheared layer still means the shallows
+# push you around while the deep is your own problem. It is a tuning knob and
+# it is named as one. The physics it scales is unchanged.
+CURRENT_COUPLING = 0.55
+
 # Quadratic drag: F = -k |v| v, and `v` is measured relative to the WATER.
 # Two coefficients because a diver is not a sphere -- streamlined along your
 # own axis, broadside across it.
@@ -102,6 +117,28 @@ DRAG_LINEAR = 0.35
 # gain is what turns a small density difference into a felt drift.
 DIVER_DENSITY = 1000.4
 BUOYANCY_GAIN = 210.0
+
+# The largest density anomaly this simple buoyancy model is allowed to see,
+# in kg/m^3.
+#
+# BUOYANCY_GAIN is calibrated against the anomalies an ocean actually makes --
+# tenths of a kg/m^3 from a plume or a cold pocket. A CAVITATION CLOUD is not
+# that: `BUBBLE_LIGHTENING` is 40 kg/m^3 at full void fraction, so a diver
+# standing in his own lamp exhaust saw 5.9 and a buoyancy of 1248 px/s^2 --
+# sixty-odd g, straight up, into the ceiling. Reported from play as "the lamp
+# explodes motion towards the top", and it survived two wrong fixes (spreading
+# the heat, then spreading the bubbles) because neither of those was the
+# mechanism: the mechanism is that the response was linear and unbounded.
+#
+# Clamping at 0.8 keeps every natural anomaly in range -- they are all far
+# below it -- and stops a bubble cloud being a catapult.
+#
+# NOTE, and it is a real one rather than a caveat: past this clamp the model
+# is also SIGN-WRONG. Lighter water gives a body less support, so a diver in a
+# bubble cloud should sink, which is why ships founder over gas seeps. Getting
+# that right means separating the body from the water it displaces, and it is
+# worth doing properly rather than in a playtest fix.
+MAX_BUOYANT_ANOMALY = 0.8
 
 # The bladder. Slow to change, free to hold, and it is the only way to change
 # depth that does not spend anything -- so it is the opposite of thrust on
@@ -171,6 +208,7 @@ class Diver:
             return V(0.0, 0.0)
         # Both terms are NEGATIVE for up, because +y is down. Written with
         # the wrong sign on trim, a full bladder sank you at 30 px/s.
+        anomaly = max(-MAX_BUOYANT_ANOMALY, min(MAX_BUOYANT_ANOMALY, anomaly))
         lift = -anomaly * BUOYANCY_GAIN - self.trim * TRIM_GAIN
         return V(0.0, lift)
 
@@ -189,7 +227,7 @@ class Diver:
             u, v = medium.flow_at(self.pos.x, self.pos.y)
         except Exception:
             return V(0.0, 0.0)
-        return V(float(u), float(v))
+        return V(float(u), float(v)) * CURRENT_COUPLING
 
     def _drag(self, relative) -> V:
         """Quadratic drag on the velocity RELATIVE TO THE WATER, split into

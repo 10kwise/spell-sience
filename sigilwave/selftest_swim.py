@@ -22,7 +22,8 @@ import math
 import pygame
 
 from .diver import (
-    ADDED_MASS, DRAG_ACROSS, DRAG_ALONG, Diver, KICK, TRIM_RATE, V,
+    ADDED_MASS, CURRENT_COUPLING, DRAG_ACROSS, DRAG_ALONG, Diver, KICK,
+    TRIM_RATE, V,
 )
 from .medium.field import Medium
 from .rig import couple
@@ -101,8 +102,10 @@ def test_a_current_carries_you():
         u, _ = med.flow_at(600.0, depth)
         d = swim(med, 8.0, pos=(600.0, depth))
         rows.append((label, depth, u, d.pos.x - 600.0))
+    # 11 px, not 20: the same 0.55 that every other drift number in this file
+    # was scaled by. See `CURRENT_COUPLING` below.
     check("in a current, standing still moves you",
-          abs(rows[0][3]) > 20.0, f"{rows[0][3]:.1f} px in 8 s at 40 m")
+          abs(rows[0][3]) > 11.0, f"{rows[0][3]:.1f} px in 8 s at 40 m")
     # Compared against the FINAL velocity rather than the average, because
     # added mass means matching the water takes seconds and an average over
     # the spin-up is guaranteed to come in low. The first version of this
@@ -112,12 +115,24 @@ def test_a_current_carries_you():
     for label, depth, u, _ in rows:
         d = swim(med, 25.0, pos=(600.0, depth))
         settled.append((label, u, d.vel.x))
-    check("and given time you end up going as fast as the water is",
+    # Against the current the diver ACTUALLY FEELS, which is
+    # `CURRENT_COUPLING` of the parcel velocity the medium reports. A diver is
+    # a compact body a couple of metres across; `flow_at` is the mean velocity
+    # of a 16 m square of ocean, and treating the two as the same number made
+    # crossing an ordinary plume feel like a fight. Measured after the change,
+    # the diver settles at 0.545, 0.549 and 0.556 of the parcel speed at the
+    # three depths -- which is the coupling constant to three figures, so what
+    # this check is really confirming is that a drifting diver still ends up
+    # matching the water around him exactly. Only the definition of "the water
+    # around him" moved.
+    settled = [(l, u * CURRENT_COUPLING, v) for l, u, v in settled]
+    check("and given time you end up going as fast as the water carries you",
           all(abs(v - u) < abs(u) * 0.25 + 0.25 for _, u, v in settled),
           str([(l, f"{u:.2f} vs {v:.2f}") for l, u, v in settled]))
-    for (label, depth, u, dx), (_, _, v) in zip(rows, settled):
+    for (label, depth, u, dx), (_, felt, v) in zip(rows, settled):
         _report(f"{label:8s} ({depth:3.0f} m)",
-                f"water {u:+5.2f} px/s, you settle at {v:+5.2f} px/s")
+                f"water {u:+5.2f} px/s, you feel {felt:+5.2f}, "
+                f"you settle at {v:+5.2f} px/s")
 
 
 def test_the_shallows_push_and_the_deep_does_not():
@@ -224,8 +239,16 @@ def test_drifting_is_free_and_crossing_is_not():
           drifting.speed_through_water(med) < drifting.speed * 0.2,
           f"{drifting.speed_through_water(med):.3f} px/s through the water"
           f" against {drifting.speed:.3f} over the ground")
+    # 1.6, not 3.0, and the ratio is the whole of the change: `CURRENT_COUPLING`
+    # is 0.55, so every drift number in this suite is 55% of what it was. A
+    # diver is a compact body, not a 16 m parcel of ocean, and taking the cell
+    # mean as the speed of the water on his skin made crossing an ordinary
+    # plume feel like a fight -- reported twice from play. The RANKINGS this
+    # file exists to protect are untouched: drifting is still nearly free,
+    # crossing still costs, and the shallows still push you around while the
+    # deep does not.
     check("even though they are moving over the ground",
-          drifting.speed > 3.0, f"{drifting.speed:.2f} px/s over the ground")
+          drifting.speed > 1.6, f"{drifting.speed:.2f} px/s over the ground")
     _report("drifting: over the ground",
             f"{drifting.speed:6.2f} px/s")
     _report("drifting: through the water",

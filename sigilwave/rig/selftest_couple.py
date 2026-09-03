@@ -71,13 +71,30 @@ def _run(med, preset_or_chain, x, y, seconds, dt=1.0 / 60.0, coil_at=None):
 # --- 1 ----------------------------------------------------------------------
 
 
+def _patch_temp(med, x, y):
+    """Total temperature over the 3x3 a rig exhausts into.
+
+    `couple.spread_heat` puts a rig-second into a centre-weighted kernel
+    rather than a single cell, because dumping a THERMAL_COUPLING-amplified
+    second into one 16 m cell made an updraft that threw the diver standing in
+    it 490 px up. So the cell this test used to read now receives exactly the
+    kernel's centre weight -- 0.6203 against 3.1014 applied, which is 0.20 to
+    four figures. The claim being tested is that the heat the ledger gave up
+    arrives in the water, and that is a claim about the patch, not the point.
+    """
+    row, col = med._cell(x, y)
+    r0, r1 = max(0, row - 1), min(med.ny, row + 2)
+    c0, c1 = max(0, col - 1), min(med.nx, col + 2)
+    return float(med.temp[r0:r1, c0:c1].sum())
+
+
 def test_the_ledger_reaches_the_water():
     print("\n[1] heat the ledger says left the rig is in the ocean")
     med = _fresh()
     x, y = 320.0, 200.0
-    before = _cell_temp(med, x, y)
+    before = _patch_temp(med, x, y)
     result, applied = _run(med, library.get("the heater"), x, y, 1.0)
-    after = _cell_temp(med, x, y)
+    after = _patch_temp(med, x, y)
 
     check("a heater warms the cell it stands in", after > before + 0.5,
           f"{before:.2f} -> {after:.2f} C")

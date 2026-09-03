@@ -181,6 +181,7 @@ class Observatory:
         self._tick = 0
         self._note = "press H for the controls"
         self.achieved = 0
+        self.exhaust = None
 
         # Let the ocean settle before anybody looks at it.
         for _ in range(240):
@@ -238,8 +239,37 @@ class Observatory:
                         bounds=(WORLD_W, WORLD_H), economy=self.economy)
 
         if self.running_rig and self.rig_name != "the thruster":
+            # Out of the PORT, not out of the middle of the diver.
+            #
+            # `couple.apply` puts a rig-second of consequence at the
+            # coordinate it is given, and passing the diver's own position
+            # meant the exhaust materialised inside him. For the heater that
+            # is merely warm; for the lamp, which is six EXPANDs and whose
+            # entire output is a cavitation cloud, it was a rising column of
+            # gas centred on his chest -- peak 54 px/s straight up, against a
+            # thruster that tops out at 23. Reported from play as "the lamp
+            # explodes motion towards the top".
+            #
+            # A pipe has an end and the water comes out of it. Which way you
+            # are pointing when you fire is now a decision, which is RIGS.md
+            # 4.1's "heat has to go somewhere and where is a decision"
+            # arriving for bubbles as well.
+            aim = self.diver.aim if self.diver.aim.length_squared() else V(1, 0)
+            port = self.diver.pos + aim.normalize() * (self.med.cell_size * 3.0)
             couple_apply(self.results[self.rig_name], self.med,
-                         self.diver.pos.x, self.diver.pos.y, dt)
+                         port.x, port.y, dt)
+            self.exhaust = (port.x, port.y)
+            # What the rig is actually doing to the water, in the same
+            # register as `couple.report`. Reported from play: "I cannot test
+            # gadgets properly, they do not have clear feedback."
+            if self._tick % 15 == 0:
+                try:
+                    self._note = f"{self.rig_name}: " + rig_report(
+                        self.results[self.rig_name], self.med, port.x, port.y)
+                except Exception:
+                    pass
+        else:
+            self.exhaust = None
 
         self.station.resupply(self.diver.pos, self.economy, dt)
 
@@ -356,6 +386,10 @@ class Observatory:
                              (x + flow.x * 6, y + flow.y * 6), 1)
         if self.running_rig:
             pygame.draw.circle(screen, (250, 200, 120), (x, y), 14, 1)
+        if self.exhaust is not None:
+            ex, ey = int(self.exhaust[0]), int(self.exhaust[1]) + TOPBAR
+            pygame.draw.circle(screen, (250, 200, 120), (ex, ey), 9, 1)
+            pygame.draw.line(screen, (250, 200, 120), (x, y), (ex, ey), 1)
 
     def _bar(self, screen, font, small):
         pygame.draw.rect(screen, BAR, (0, 0, WIN_W, TOPBAR))

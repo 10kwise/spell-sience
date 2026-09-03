@@ -113,6 +113,52 @@ def ambient_from(medium, x: float, y: float, coil_at=None) -> Ambient:
 # --- writing the consequences ------------------------------------------------
 
 
+# A rig exhaust spread over a 3x3 of cells rather than dumped into one.
+#
+# `Medium.add_heat` is deliberately single-cell, and for sound that is right --
+# its docstring says a kernel would smear the density boundary the acoustic
+# mirror depends on. A rig exhaust is a different animal: it is a jet mixing
+# into water, not a point absorption, and putting a THERMAL_COUPLING-amplified
+# second of it into one 16 m cell made a local updraft violent enough to throw
+# the diver standing in it 490 px straight up in twenty seconds. Reported from
+# play as "the lamp explodes motion towards the top"; it was every rig that
+# touches the water, and the lamp was merely the worst.
+#
+# Centre-weighted and summing to 1, so the total heat is unchanged and only
+# the peak comes down -- by about a factor of five, which is the difference
+# between a thermal you can feel and one that launches you.
+EXHAUST_KERNEL = (
+    (0, 0, 0.20),
+    (1, 0, 0.12), (-1, 0, 0.12), (0, 1, 0.12), (0, -1, 0.12),
+    (1, 1, 0.08), (1, -1, 0.08), (-1, 1, 0.08), (-1, -1, 0.08),
+)
+
+
+def spread_heat(medium, x: float, y: float, degrees: float) -> None:
+    """Put a rig-second of heat into the water as a plume, not a spike."""
+    cs = medium.cell_size
+    for dx, dy, w in EXHAUST_KERNEL:
+        medium.add_heat(x + dx * cs, y + dy * cs, degrees * w)
+
+
+def spread_bubbles(medium, x: float, y: float, amount: float,
+                   radius: float) -> None:
+    """The same, for a cavity collapsing into a cloud.
+
+    This is the one the lamp needed. Heat spreading fixed the heater and the
+    cooler and did nothing at all for the lamp, which is six EXPANDs and tears
+    the water rather than warming it -- so its whole output is BUBBLES, and
+    `BUBBLE_LIGHTENING` is 40 kg/m^3 against a thermal anomaly worth 0.2 per
+    degree. A cavitation cloud in one 16 m cell is by far the most violent
+    thing a rig can do to the water column, and standing in it moved the diver
+    490 px straight up in twenty seconds -- unchanged by the heat fix, because
+    heat was never what was lifting him.
+    """
+    cs = medium.cell_size
+    for dx, dy, w in EXHAUST_KERNEL:
+        medium.add_bubbles(x + dx * cs, y + dy * cs, amount * w, radius)
+
+
 def apply(result, medium, x: float, y: float, dt: float,
           coil_at=None) -> dict:
     """Put one rig-second's worth of consequence into the ocean.
@@ -139,7 +185,7 @@ def apply(result, medium, x: float, y: float, dt: float,
     net_joules = (led.heat_to_ocean - led.heat_from_ocean) * dt
     if abs(net_joules) > 0.0:
         degrees = net_joules / joules_per_degree * THERMAL_COUPLING
-        medium.add_heat(cx, cy, degrees)
+        spread_heat(medium, cx, cy, degrees)
         applied["heat_c"] = degrees
 
     # Water that leaves the port carries its own temperature with it, and it
@@ -149,7 +195,7 @@ def apply(result, medium, x: float, y: float, dt: float,
     port_joules = led.heat_out * dt
     if abs(port_joules) > 0.0:
         degrees = port_joules / joules_per_degree * THERMAL_COUPLING
-        medium.add_heat(x, y, degrees)
+        spread_heat(medium, x, y, degrees)
         applied["heat_c"] += degrees
 
     # --- gas ----------------------------------------------------------------
@@ -176,7 +222,7 @@ def apply(result, medium, x: float, y: float, dt: float,
         row, _ = medium._cell(x, y)
         radius = NUCLEATION_RADIUS * float(medium.pressure[row, 0]) ** (-1.0 / 3.0)
         amount = cloud * dt
-        medium.add_bubbles(x, y, amount, radius)
+        spread_bubbles(medium, x, y, amount, radius)
         applied["bubbles"] = amount
 
     return applied
