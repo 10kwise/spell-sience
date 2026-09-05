@@ -202,6 +202,48 @@ bodies walk the floor; light bodies climb shafts. The game's "double jump"
 is a **negative number** — a Mirror Sac inverting brine — and nobody had to
 write a jump button.
 
+## Four ways of seeing
+
+A standing chain does not only change what you *are*. It changes what you
+can perceive, and the four humours disagree about what perception even is:
+
+| running | you see |
+|---|---|
+| **nerve** | living things, straight through rock. **not** the rock. |
+| **weight** | the shape of the room, walls and all. **nothing** that lives in it. |
+| **sediment** | only what moves. a creature holding still is not quiet, it is *absent*. |
+| **heat** | everything nearby, ordinarily — and everything sees you back. |
+
+Four standing chains, four different games, and not one new rule: it is the
+same humour doing the same thing it does when you throw it at something,
+pointed inward.
+
+## What the Bench does to your body
+
+Beyond weapons, keys, warmth, cover, healing and buoyancy, a standing chain
+changes how you move and who notices you — all derived, none of it a stat
+you bought:
+
+| | derived from | |
+|---|---|---|
+| **speed** | nerve quickens, weight slows | up to **+32%** on a ganglion/spine chain |
+| **lure** | your light × your concentration | a burning body is noticed **2.4×** as readily |
+| **ward** | rot and live nerve — things it hurts to be near | pushes creatures off you physically |
+| **kinship** | how closely your humours match theirs | a silt body in the Cisterns is noticed **half** as much |
+
+That last one is the game's thesis made mechanical: **build yourself out of
+what lives here and what lives here stops minding you.** The cost is that
+you *are* what you resemble, and the deep regions are full of things you
+would not want to be.
+
+## Grafting
+
+Hold an organ from CARRIED, select one in your body, press `G`. They grow
+into a single socket that does what both did, in that order, keeping about
+86% of it. It is literally function composition — no new rules, it cannot
+be tuned apart from its parents, and it rebuilds itself from its key alone
+when you load a save.
+
 ## The dark
 
 You see by your own glow, and your glow is a readout of what you are
@@ -238,7 +280,19 @@ spare.
 | `TAB` | the Bench — surgery and the Assay |
 | `C` | the codex |
 | `M` | the map |
+| `H` | **the rules** — every bar on the screen, your live upkeep, and what is currently killing you |
 | `ESC` | back |
+
+You never die without being told why. Every point of damage in the game
+goes through one function that records a reason, and the death screen ranks
+them:
+
+```
+                    what took you apart
+        the live water  ████████████████████
+    Circuit, ramming you  ███
+ being too much one thing  █
+```
 
 ### At the Bench
 
@@ -253,6 +307,8 @@ spare.
 | `X` / `BACKSPACE` | clear the path / undo one step |
 | `ENTER` | keep it · `ESC` cancel |
 | `SPACE` | the **Assay** |
+| `V` | hold an assay, to compare two builds side by side |
+| `G` | graft two organs into one socket |
 | `L` | the **Shelf** — sixteen prebuilt chains that work |
 | `F1` | the tutorial, nine steps, advances as you do things |
 
@@ -331,7 +387,7 @@ concrete things I would build next — including the ones I would refuse.
 ## Verifying it
 
 ```
-python -m clade.verify.selftest    # 115 assertions about the *design*
+python -m clade.verify.selftest    # 136 assertions about the *design*
 python -m clade.verify.inputs      # every key on every screen
 python -m clade.verify.playtest    # four bots of increasing understanding
 python -m clade.verify.shots       # renders the game to shots/ with no display

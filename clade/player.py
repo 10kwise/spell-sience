@@ -141,7 +141,8 @@ class Player:
         h = f.heat_at(self.pos)
         mods = self.body.mods
         if h > BURN_AT:
-            self.take_damage((h - BURN_AT) * 6.0 * dt * mods["fragility"], world)
+            self.take_damage((h - BURN_AT) * 6.0 * dt * mods["fragility"],
+                             world, cause="burning water")
         elif h < FREEZE_AT * 0.6:
             # Cold does not damage you. It slows you, which down here is
             # worse and takes longer to notice.
@@ -149,7 +150,8 @@ class Player:
             self.vel[1] *= 0.94
         ch = f.charge_at(self.pos)
         if ch > 0.35:
-            self.take_damage(ch * 4.5 * dt * mods["fragility"], world)
+            self.take_damage(ch * 4.5 * dt * mods["fragility"], world,
+                             cause="charged water")
 
     # -------------------------------------------------------------- verbs
 
@@ -206,11 +208,11 @@ class Player:
             return target
         return None
 
-    def take_damage(self, amount, world, from_pos=None):
+    def take_damage(self, amount, world, from_pos=None, cause="something"):
         if self.invuln > 0.0 or amount <= 0.0:
             return
         amount *= self.body.mods["fragility"] / self.body.mods["toughness"]
-        self.body.viability -= amount
+        self.body.hurt(amount, cause)
         self.hurt_flash = 1.0
         self.shake = max(self.shake, min(9.0, amount * 0.6))
         if amount > 3.0:

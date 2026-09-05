@@ -42,7 +42,8 @@ from ..humours import (
     BLEND_NOTES, COLORS, GLYPHS, N_HUMOURS, NAMES, Charge, blend_of,
 )
 from ..lore import organ_line
-from ..organs import BY_KEY, ChainContext, INTAKE, TRANSFORM, VENT, make
+from ..organs import (
+    BY_KEY, ChainContext, INTAKE, TRANSFORM, VENT, can_fuse, fuse_key, make)
 from ..render.hud import font, text
 from ..shelf import FIRED, SHELF, STANDING, missing_for
 
@@ -100,9 +101,15 @@ class Tutorial:
          "FIZZLE and assay both — they are the same five organs in a "
          "different order.",
          "press L", lambda b, s: s.shelf_open or s.tut_shelf),
+        ("two into one",
+         "hold an organ from CARRIED, click one in your body, and press G. "
+         "they grow together into one socket that does what both did, in "
+         "that order. V holds an assay so you can compare two builds.",
+         "press G, or any key to move on", lambda b, s: s.tut_late),
         ("that is all of it",
          "everything else is yours to find out. the Assay never lies and "
-         "never costs anything.",
+         "never costs anything. H, out in the water, explains every bar "
+         "on the screen and what is currently killing you.",
          "press ESC to go back to the water", lambda b, s: False),
     ]
 
@@ -150,6 +157,8 @@ class BenchScreen:
         self.tut_committed = False
         self.tut_assayed = False
         self.tut_shelf = False
+        self.pinned = None           # a second assay, held for comparison
+        self.tut_late = False
 
     # ------------------------------------------------------------- helpers
 
@@ -343,6 +352,8 @@ class BenchScreen:
     def _key(self, e):
         k = e.key
         self.tut_key = True
+        if self.tutorial.step >= len(Tutorial.STEPS) - 2:
+            self.tut_late = True
 
         if self.shelf_open:
             self._shelf_key(k)
@@ -383,12 +394,58 @@ class BenchScreen:
             if self.editing is not None:
                 self.route = []
                 self.say("path cleared — click sockets to build a new one")
+        elif k == pygame.K_g:
+            self._fuse()
+        elif k == pygame.K_v:
+            if self.assay is None:
+                self.say("nothing to hold on to")
+            elif self.pinned is not None:
+                self.pinned = None
+                self.say("let it go")
+            else:
+                n = self.assay_chain + (5 if self.assay_standing else 1)
+                self.pinned = ("chain %d" % n, self.assay)
+                self.say("holding that one — assay another to compare")
         elif k == pygame.K_l:
             self.shelf_open = True
             self.shelf_index = 0
             self.tut_shelf = True
         elif k in (pygame.K_F1, pygame.K_SLASH, pygame.K_QUESTION):
             self.show_tutorial = not self.show_tutorial
+
+    def _fuse(self):
+        """Grow the organ you are holding into the one you have selected.
+
+        Both are consumed and one socket comes back with a graft that does
+        what both did, in order, keeping a little less. It is function
+        composition, so it needs no rules of its own and cannot be tuned
+        apart from its parents."""
+        body = self.body
+        if self.held is None or self.sel_cell is None:
+            self.say("to graft: click an organ in your body, hold another "
+                     "from CARRIED, then press G")
+            return
+        target = body.organ_at(self.sel_cell)
+        if target is None:
+            self.say("nothing selected to graft onto")
+            return
+        ok, why = can_fuse(target.type, self.held.type)
+        if not ok:
+            self.say(why)
+            return
+        key = fuse_key(target.key, self.held.key)
+        grafted = make(key)
+        body.uninstall(self.sel_cell)
+        for o in list(body.pack):
+            if o is target or o is self.held:
+                body.pack.remove(o)
+        body.install(self.sel_cell, grafted)
+        self.held = None
+        self.sel_pack = None
+        self.game.codex.see_organ(key)
+        body.recompute_standing()
+        self._run_assay()
+        self.say("grew them together: %s" % grafted.name)
 
     def _auto_route(self):
         """Find a legal path for the slot being edited. Not clever — it is
@@ -623,10 +680,10 @@ class BenchScreen:
 
     def _draw_header(self, surf):
         text(surf, "THE BENCH", (GRID_X, 34), 38, (200, 210, 220), bold=True)
-        keys = ("right-click removes   ·   1-6 edit a chain   ·   R routes it "
-                "for you   ·   SPACE assays   ·   L shelf   ·   F1 help   "
-                "·   ESC back")
-        text(surf, keys, (GRID_X, 74), 17, (104, 114, 124))
+        keys = ("right-click removes  ·  1-6 edit a chain  ·  R routes it "
+                "for you  ·  SPACE assays  ·  V hold one to compare  ·  "
+                "G graft two together  ·  L shelf  ·  F1 help  ·  ESC back")
+        text(surf, keys, (GRID_X, 74), 16, (104, 114, 124))
 
     def _status_line(self):
         if self.shelf_open:
@@ -882,6 +939,14 @@ class BenchScreen:
             yy += 25
 
         eff, rows = effect_summary(final)
+        pin_rows = {}
+        if self.pinned is not None:
+            _plabel, (_ps, pfinal, _pc, _pst) = self.pinned
+            _pe, pr = effect_summary(pfinal)
+            pin_rows = {r[0]: r[1] for r in pr}
+            text(surf, "vs %s (V to drop)" % self.pinned[0],
+                 (PACK_X + 296, top - 22), 15, (150, 176, 190), right=True)
+
         y2 = top
         if not rows:
             text(surf, "almost nothing", (PACK_X, y2), 18, (110, 120, 128))
@@ -892,8 +957,22 @@ class BenchScreen:
             pygame.draw.rect(surf, col,
                              pygame.Rect(PACK_X + 92, y2 + 3,
                                          int(150 * frac), 9))
-            text(surf, "%.1f" % value, (PACK_X + 296, y2), 15,
-                 (120, 130, 138), right=True)
+            if label in pin_rows:
+                # The held chain, as a notch on the same bar. Comparing two
+                # builds used to mean remembering four numbers across two
+                # screens, which nobody does.
+                other = pin_rows[label]
+                ratio = min(1.0, other / max(1e-6, value) * frac)
+                nx = PACK_X + 92 + int(150 * ratio)
+                pygame.draw.line(surf, (210, 220, 230), (nx, y2 + 1),
+                                 (nx, y2 + 14), 2)
+                delta = value - other
+                text(surf, "%+.1f" % delta, (PACK_X + 296, y2), 15,
+                     (150, 200, 172) if delta >= 0 else (216, 140, 120),
+                     right=True)
+            else:
+                text(surf, "%.1f" % value, (PACK_X + 296, y2), 15,
+                     (120, 130, 138), right=True)
             y2 += 19
 
         notes = []

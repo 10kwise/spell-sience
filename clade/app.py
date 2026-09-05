@@ -37,7 +37,7 @@ from .screens.bench import BenchScreen, _wrapped
 from .world.atlas import ATLAS, REGIONS
 from .world.live import World
 
-TITLE, PLAY, BENCH, CODEX, MAPS, DEAD, ENDING = range(7)
+TITLE, PLAY, BENCH, CODEX, MAPS, DEAD, ENDING, RULES = range(8)
 
 FIRE_KEYS = {pygame.K_q: 2, pygame.K_e: 3}
 
@@ -57,6 +57,7 @@ class Game:
         self.ending_time = 0.0
         self.conspecific_hold = 0.0
         self.codex_page = 0
+        self.rules_page = 0
         self.title_index = 0
         self.running = True
         self.new_run()
@@ -151,6 +152,14 @@ class Game:
             self._play_key(e)
         elif self.state == BENCH:
             self.bench.handle(e)
+        elif self.state == RULES:
+            if e.type == pygame.KEYDOWN:
+                if e.key in (pygame.K_LEFT, pygame.K_a):
+                    self.rules_page -= 1
+                elif e.key in (pygame.K_RIGHT, pygame.K_d, pygame.K_TAB):
+                    self.rules_page += 1
+                else:
+                    self.state = PLAY
         elif self.state in (CODEX, MAPS):
             if e.type == pygame.KEYDOWN:
                 if e.key in (pygame.K_ESCAPE, pygame.K_c, pygame.K_m,
@@ -208,6 +217,8 @@ class Game:
                 self.codex_page = 0
             elif k == pygame.K_m:
                 self.state = MAPS
+            elif k in (pygame.K_h, pygame.K_F1):
+                self.state = RULES
             elif k in (pygame.K_LSHIFT, pygame.K_RSHIFT, pygame.K_SPACE):
                 self.player.surge(self.world)
             elif k in FIRE_KEYS:
@@ -246,7 +257,7 @@ class Game:
             self.bench.update(dt)
             self.body.update(dt)
             return
-        if self.state in (TITLE, CODEX, MAPS):
+        if self.state in (TITLE, CODEX, MAPS, RULES):
             return
         if self.state in (DEAD, ENDING):
             self.ending_time += dt
@@ -484,6 +495,9 @@ class Game:
             self._draw_codex(s)
         elif self.state == MAPS:
             self._draw_map(s)
+        elif self.state == RULES:
+            from .screens.rules import draw as draw_rules
+            draw_rules(s, self, self.rules_page)
         elif self.state == ENDING:
             self._draw_ending(s)
         else:
@@ -512,9 +526,11 @@ class Game:
             pre = "> " if i == self.title_index else "  "
             text(s, pre + o, (w // 2, h // 2 + 10 + i * 34), 28, col,
                  center=True)
-        text(s, "wasd swim · mouse aim · lmb rmb q e · shift surge · "
-                "hold f to feed · tab bench · c codex · m map",
-             (w // 2, h - 54), 18, (74, 82, 90), center=True)
+        text(s, "wasd swim · mouse aim · lmb rmb q e fire · shift surge · "
+                "hold F to feed",
+             (w // 2, h - 74), 18, (74, 82, 90), center=True)
+        text(s, "TAB the bench · H the rules · C codex · M map",
+             (w // 2, h - 50), 18, (96, 120, 112), center=True)
 
     def _draw_dead(self, s):
         w, h = s.get_size()
@@ -523,12 +539,34 @@ class Game:
         veil.fill((6, 7, 9, a))
         s.blit(veil, (0, 0))
         if self.ending_time > 0.7:
-            text(s, "you come apart", (w // 2, h // 2 - 30), 46,
+            text(s, "you come apart", (w // 2, h // 2 - 130), 46,
                  (200, 190, 190), center=True)
+            # Naming the cause. "I just keep seeing you come apart" is what
+            # happens when a game kills you and never says what did it, and
+            # every point of damage in this one has been logged with a
+            # reason since it was reported.
+            worst = self.body.worst_causes(4)
+            y = h // 2 - 66
+            if worst:
+                text(s, "what took you apart", (w // 2, y), 20,
+                     (128, 136, 144), center=True)
+                y += 30
+                total = sum(v for _, v in worst) or 1.0
+                for cause, amount in worst:
+                    a = int(min(255, (self.ending_time - 0.7) * 260))
+                    text(s, cause, (w // 2 - 20, y), 22, (206, 190, 186),
+                         right=True, alpha=a)
+                    frac = amount / total
+                    pygame.draw.rect(s, (30, 26, 28),
+                                     pygame.Rect(w // 2 + 6, y + 6, 200, 9))
+                    pygame.draw.rect(s, (200, 116, 100),
+                                     pygame.Rect(w // 2 + 6, y + 6,
+                                                 int(200 * frac), 9))
+                    y += 32
             text(s, "not all of you is going to be there when you wake",
-                 (w // 2, h // 2 + 22), 22, (130, 130, 135), center=True)
+                 (w // 2, y + 14), 22, (130, 130, 135), center=True)
         if self.ending_time > 1.6:
-            text(s, "press anything", (w // 2, h // 2 + 76), 20,
+            text(s, "press anything", (w // 2, h - 90), 20,
                  (90, 94, 100), center=True)
 
     def _draw_map(self, s):

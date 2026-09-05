@@ -209,7 +209,24 @@ class Creature:
         # and every fight had to be started by the player.
         contact = max(0.0, (230.0 - dist) / 230.0) * 24.0
 
-        signal = (light + noise + wake + contact) * self.sp.senses
+        # A body that burns and shouts is a body things come and look at.
+        # This is the "attract enemies" build, and it is not a flag: it is
+        # the same light and the same concentration that give you away
+        # everywhere else, turned up on purpose.
+        lure = player.body.standing_fx["lure"] * 90.0 / dist
+
+        signal = (light + noise + wake + lure + contact) * self.sp.senses
+
+        # Kinship. You and this creature are both made of humours, and if
+        # your composition resembles its own it has much more trouble
+        # deciding you are not one of it.
+        #
+        # This is the game's whole thesis made mechanical: build yourself
+        # out of what lives here and what lives here stops minding you. The
+        # cost is that you *are* what you resemble, and the deep regions
+        # are full of things you would not want to be.
+        signal *= 1.0 - self.kinship(player) * 0.6
+
         target = max(0.0, min(1.0, signal / 24.0))
         if self.hidden:
             # It is not stealthed. It is *motionless*, which in water with
@@ -248,6 +265,13 @@ class Creature:
     @property
     def vulnerable(self):
         return self.phase == RECOVER
+
+    def kinship(self, player) -> float:
+        """0 = nothing like you, 1 = indistinguishable."""
+        a = self.composition.fractions()
+        b = player.body.reserve.fractions()
+        l1 = sum(abs(a[i] - b[i]) for i in range(N_HUMOURS))
+        return max(0.0, 1.0 - l1 / 1.1)
 
     @property
     def hidden(self):
@@ -335,6 +359,21 @@ class Creature:
                     if self.target_memory:
                         other.target_memory = self.target_memory
                         other.memory_age = 0.0
+
+        # Ward. A body running rot and live nerve is one nothing wants to
+        # be near, so it is not: this pushes things off you without ever
+        # touching their behaviour, which means a warded body can still be
+        # hunted, just not comfortably.
+        ward = player.body.standing_fx["ward"] if player is not None else 0.0
+        if ward > 0.2:
+            d = self.distance_to(player.pos)
+            reach = 60.0 + ward * 46.0
+            if d < reach:
+                away = ((self.pos[0] - player.pos[0]) / (d + 1e-6),
+                        (self.pos[1] - player.pos[1]) / (d + 1e-6))
+                push = (reach - d) / reach * ward * 190.0
+                self.vel[0] += away[0] * push * dt
+                self.vel[1] += away[1] * push * dt
 
         if self.stagger <= 0.0:
             self._integrate(dt, world)
@@ -620,7 +659,7 @@ def _rush(cr, dt, world, player, out, on_touch):
 
 def _touch_slam(cr, world, player):
     player.take_damage(cr.max_viability * 0.10 * C.HOSTILE_DAMAGE, world,
-                       cr.pos)
+                       cr.pos, cause=cr.sp.name + ", ramming you")
     d = cr.locked_aim
     player.vel[0] += d[0] * 420.0
     player.vel[1] += d[1] * 420.0
@@ -734,7 +773,7 @@ def _b_swarm(cr, dt, world, player, out, alarm):
         cr.cooldown = 0.7
         stolen = player.body.tap_reserve(6.5)
         cr.body.reserve.add(stolen)
-        player.body.viability -= 1.2
+        player.body.hurt(1.2, cr.sp.name)
         player.shake = max(player.shake, 3.0)
         cr.fed_flash = 1.0
 
@@ -848,7 +887,7 @@ def _b_grappler(cr, dt, world, player, out, alarm):
         cr.vel[0] = cr.vel[1] = 0.0
         stolen = player.body.tap_reserve(9.0 * dt)
         cr.body.reserve.add(stolen)
-        player.body.viability -= 3.4 * dt
+        player.body.hurt(3.4 * dt, cr.sp.name + ", attached to you")
         player.shake = max(player.shake, 2.0)
         cr.fed_flash = 1.0
         return

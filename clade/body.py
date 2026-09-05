@@ -104,6 +104,8 @@ class Body:
         self._standing_timer = 0.0
         self.upkeep = C.BASE_UPKEEP
         self.clog = 0.0        # region hazard: fraction of intake lost
+        self._sense_dom = None
+        self._sense_mag = 0.0
         # Pressure. Set by the region you are in, and it multiplies
         # everything your body costs to run.
         #
@@ -114,6 +116,14 @@ class Body:
         # body progressively unaffordable, which is what turns "hunt when
         # you feel like it" into "you cannot stay down here for free".
         self.pressure = 1.0
+        # Everything that has hurt you lately, and how much. There is
+        # exactly one entry point for losing viability (hurt(), below) so
+        # this cannot go stale or miss a source — which matters because
+        # "I just keep seeing you come apart" is what happens when a game
+        # kills you without ever saying what did it.
+        self.damage_log = {}
+        self.recent_cause = None
+        self.recent_cause_t = 0.0
         self.reserve = Charge(6.0, 22.0, 8.0, 4.0)
         self.reserve_cap = C.RESERVE_CAP
         self.viability = C.VIABILITY_MAX
@@ -338,7 +348,8 @@ class Body:
         shape = vent.type.vent
 
         eff = resolve(charge)
-        self.viability -= ctx.viability_cost + eff.recoil * 0.35
+        self.hurt(ctx.viability_cost + eff.recoil * 0.35,
+                  "the chain you fired")
 
         count = max(1, shape.count * ctx.count)
         spread = shape.spread + ctx.spread
@@ -400,6 +411,27 @@ class Body:
             if fired:
                 o.integrity = max(0.0, o.integrity - 0.00035)
 
+    # ----------------------------------------------------------- damage
+
+    def hurt(self, amount, cause="something"):
+        """The only way viability goes down. Everything else calls this."""
+        if amount <= 0.0:
+            return 0.0
+        self.viability -= amount
+        self.damage_log[cause] = self.damage_log.get(cause, 0.0) + amount
+        if amount > self.recent_cause_t or self.recent_cause is None:
+            self.recent_cause = cause
+            self.recent_cause_t = amount
+        return amount
+
+    def decay_cause(self, dt):
+        self.recent_cause_t = max(0.0, self.recent_cause_t - dt * 6.0)
+        if self.recent_cause_t <= 0.0:
+            self.recent_cause = None
+
+    def worst_causes(self, n=3):
+        return sorted(self.damage_log.items(), key=lambda kv: -kv[1])[:n]
+
     # --------------------------------------------------------- standing
 
     def recompute_standing(self):
@@ -420,6 +452,7 @@ class Body:
         """
         fx = _EMPTY_STANDING.copy()
         cost = 0.0
+        best_mag, best_dom = 0.0, None
         for ch in self.standing:
             ok, _ = self.validate(ch, standing=True)
             if not ok:
@@ -458,8 +491,36 @@ class Body:
             fx["lift"] += eff.lift
             fx["light"] += eff.light
             fx["magnitude"] += charge.magnitude
+            fx["divergence"] = max(fx["divergence"], eff.divergence)
+            if charge.magnitude > best_mag:
+                best_mag = charge.magnitude
+                best_dom = charge.dominant
             cost += charge.magnitude * C.STANDING_UPKEEP_PER_MAGNITUDE
+
+        # --- what all of that adds up to, for the body wearing it.
+        #
+        # Every line below is the same humour doing the same thing it does
+        # when you throw it at something, only pointed at yourself.
+
+        # Nerve quickens you; weight slows you. This is the "swim faster"
+        # upgrade, and it is not a stat you bought — it is what carrying
+        # nerve does.
+        fx["speed"] = min(0.55, fx["jolt"] * 0.085) - min(
+            0.35, max(0.0, -fx["lift"]) * 0.035)
+
+        # A body that burns and shouts is a body things come to look at.
+        # Derived from exactly the two channels that already give you away
+        # everywhere else: light, and concentration.
+        fx["lure"] = fx["light"] * 0.55 + fx["magnitude"] * fx["divergence"] * 0.5
+
+        # And a body that is caustic and live is one they would rather not
+        # touch. Rot and shock, which are already the two things that hurt
+        # on contact.
+        fx["ward"] = fx["caustic"] * 0.7 + fx["jolt"] * 0.45
+
         self.standing_fx = fx
+        self._sense_dom = best_dom
+        self._sense_mag = best_mag
         self.upkeep = (C.BASE_UPKEEP + cost) * self.pressure
         return fx
 
@@ -505,10 +566,13 @@ class Body:
         # a bit specialised is nearly free and being entirely one thing is
         # a slow suicide with excellent damage numbers.
         st = strain(self.reserve) * (self.reserve.magnitude / self.reserve_cap)
-        self.viability -= st * C.IMBALANCE_RATE * dt
+        if st > 0.01:
+            self.hurt(st * C.IMBALANCE_RATE * dt,
+                      "being too much one thing")
 
         if self.reserve.magnitude < 1.0:
-            self.viability -= C.STARVE_RATE * dt
+            self.hurt(C.STARVE_RATE * dt, "an empty tank")
+        self.decay_cause(dt)
 
         if world is not None and pos is not None:
             # Ambient uptake covers the base rate and nothing beyond it.
@@ -560,7 +624,7 @@ class Body:
                 # Cooking. The organ is being destroyed, slowly and
                 # visibly, and the player has plenty of time to stop.
                 org.integrity = max(0.0, org.integrity - 0.09 * dt)
-                self.viability -= 2.0 * dt
+                self.hurt(2.0 * dt, "your own organs cooking")
             org.heat = max(0.0, org.heat)
 
         if world is not None and pos is not None and shed > 0.0:
@@ -592,6 +656,45 @@ class Body:
     @property
     def sight(self):
         return min(C.MAX_SIGHT, C.BASE_SIGHT + self.glow * 240.0)
+
+    # ---------------------------------------------------------- the senses
+
+    @property
+    def sense_mode(self):
+        """(key, blurb, strength) for whatever your standing chains have
+        turned you into. None if you are running nothing."""
+        if self._sense_dom is None or self._sense_mag < 0.8:
+            return None
+        name, blurb = SENSE_MODES[self._sense_dom]
+        return name, blurb, min(1.0, self._sense_mag / 5.0)
+
+    def senses(self):
+        """How far you perceive, split by *what*.
+
+        Sight is one number in most games. Here it is three, because the
+        four humours disagree about what perception even is: weight feels
+        the shape of a room and nothing alive in it, nerve finds living
+        things straight through rock, sediment reports only what moves, and
+        heat simply lights the place up and tells everyone where you are."""
+        base = self.sight
+        out = {"geometry": base, "creature": base, "moving_only": False,
+               "mode": None}
+        mode = self.sense_mode
+        if mode is None:
+            return out
+        key, _blurb, k = mode
+        out["mode"] = key
+        if key == "pressure":
+            out["geometry"] = min(1100.0, base + 240.0 + k * 620.0)
+        elif key == "nerve":
+            out["creature"] = min(1200.0, base + 260.0 + k * 700.0)
+        elif key == "displacement":
+            out["creature"] = min(1000.0, base + 200.0 + k * 520.0)
+            out["moving_only"] = True
+        elif key == "light":
+            out["geometry"] = base + k * 180.0
+            out["creature"] = base + k * 180.0
+        return out
 
     def to_dict(self):
         return {
@@ -634,7 +737,21 @@ class Body:
 
 _EMPTY_STANDING = {"heat": 0.0, "murk": 0.0, "gentle": 0.0, "jolt": 0.0,
                    "caustic": 0.0, "lift": 0.0, "light": 0.0,
-                   "magnitude": 0.0}
+                   "magnitude": 0.0, "speed": 0.0, "lure": 0.0, "ward": 0.0,
+                   "reach": 0.0, "divergence": 0.0}
+
+# What a standing chain lets you perceive, by which humour it is mostly
+# made of. Four chains, four different games, and not one new rule — each
+# is the same humour doing the same thing it does everywhere else, pointed
+# inward instead of outward.
+SENSE_MODES = {
+    SPARK: ("nerve", "living things shine through rock. the rock does not."),
+    BRINE: ("pressure", "you feel the shape of the room. nothing that lives "
+                        "in it."),
+    SILT: ("displacement", "what moves is bright. what holds still is not "
+                           "there at all."),
+    ICHOR: ("light", "you burn, so you can see, so you can be seen."),
+}
 
 ORGAN_SEIZE = C.ORGAN_SEIZE_AT
 ORGAN_COOL = C.ORGAN_COOL_AT

@@ -19,7 +19,8 @@ import math
 import pygame
 
 from .. import config as C
-from ..humours import BRINE, COLORS, GLYPHS, ICHOR, N_HUMOURS, SILT, SPARK
+from ..humours import (
+    BRINE, COLORS, GLYPHS, ICHOR, NAMES, N_HUMOURS, SILT, SPARK)
 
 _fonts = {}
 
@@ -56,14 +57,35 @@ def draw_hud(surf, world, player, notices=None):
 
     _threat_edge(surf, world.threat_level(), world)
     _viability(surf, b, (78, h - 78))
+    text(surf, "%d" % int(max(0, b.viability)), (78, h - 78), 20,
+         (200, 212, 222), center=True)
     _reserve(surf, b, (128, h - 128))
     _standing(surf, b, (128, h - 172))
     _chains(surf, b, (w - 26, h - 30))
     _hazard(surf, world, (w // 2, h - 96))
+    _sense(surf, b, (24, 68))
+    _hurting(surf, b, (w // 2, h - 128))
     _events(surf, world, (w // 2, 74))
     if notices:
         _notices(surf, notices, (w // 2, h - 168))
     _room_label(surf, world, (24, 22))
+
+
+def _sense(surf, body, pos):
+    mode = body.sense_mode
+    if mode is None:
+        return
+    name, _blurb, _k = mode
+    text(surf, name, pos, 19, (150, 186, 200))
+
+
+def _hurting(surf, body, center):
+    """What is taking you apart, while it is taking you apart."""
+    if body.recent_cause is None or body.recent_cause_t < 0.04:
+        return
+    a = int(min(230, 90 + body.recent_cause_t * 900))
+    text(surf, body.recent_cause, center, 21, (222, 146, 122), center=True,
+         alpha=a)
 
 
 def _viability(surf, body, center):
@@ -107,13 +129,16 @@ def _reserve(surf, body, topleft):
                          pygame.Rect(x + 2, yy, total_w - 4, hgt - 2))
         if bw > 1:
             pygame.draw.rect(surf, col, pygame.Rect(x + 2, yy, bw, hgt - 2))
-        text(surf, GLYPHS[i], (x + total_w + 6, yy - 3), 17,
-             (col[0] // 2 + 70, col[1] // 2 + 70, col[2] // 2 + 70))
+        text(surf, "%s %s" % (GLYPHS[i], NAMES[i]),
+             (x + total_w + 6, yy - 2), 15,
+             (col[0] // 2 + 60, col[1] // 2 + 60, col[2] // 2 + 60))
 
     # Neutral buoyancy marker on the brine band: where you stop sinking.
     mx = x + 2 + int((total_w - 4) * C.NEUTRAL_BRINE)
     pygame.draw.line(surf, (200, 210, 220), (mx, y + 2), (mx, y + hgt),  1)
-    text(surf, "%d" % int(res.magnitude), (x - 30, y + hgt), 18, (130, 140, 150))
+    text(surf, "RESERVE", (x, y - 17), 15, (110, 122, 130))
+    text(surf, "%d" % int(res.magnitude), (x - 8, y - 15), 18,
+         (150, 162, 172), right=True)
 
     # What it is costing you to be the thing you currently are. Ambient
     # uptake covers the base rate and nothing more, so any number here
@@ -121,7 +146,8 @@ def _reserve(surf, body, topleft):
     up = body.upkeep
     col = (150, 160, 170) if up < 1.0 else (
         (210, 170, 110) if up < 1.6 else (232, 130, 110))
-    text(surf, "-%.1f/s" % up, (x - 40, y + hgt * 2 + 2), 17, col)
+    text(surf, "upkeep -%.1f/s" % up, (x, y + hgt * 4 + 10), 16, col)
+    text(surf, "H  the rules", (x, y + hgt * 4 + 28), 15, (92, 112, 118))
 
 
 def _standing(surf, body, topleft):

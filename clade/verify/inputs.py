@@ -24,7 +24,8 @@ import pygame
 pygame.init()
 
 from .. import config as C
-from ..app import BENCH, CODEX, DEAD, ENDING, Game, MAPS, PLAY, TITLE
+from ..app import (
+    BENCH, CODEX, DEAD, ENDING, Game, MAPS, PLAY, RULES, TITLE)
 
 KEYS = [
     pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE, pygame.K_TAB,
@@ -34,12 +35,14 @@ KEYS = [
     pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5,
     pygame.K_6, pygame.K_7, pygame.K_l, pygame.K_r, pygame.K_x,
     pygame.K_F1, pygame.K_SLASH, pygame.K_LSHIFT, pygame.K_z,
+    pygame.K_g, pygame.K_v, pygame.K_h,
     pygame.K_0, pygame.K_9,
 ]
 
 STATES = [
     ("title", TITLE), ("play", PLAY), ("bench", BENCH),
     ("codex", CODEX), ("map", MAPS), ("dead", DEAD), ("ending", ENDING),
+    ("rules", RULES),
 ]
 
 # Places a click can land at the Bench: sockets, carried list, empty space.
@@ -131,6 +134,10 @@ def main():
         ],
         "tutorial toggling": [
             pygame.K_F1, pygame.K_F1, pygame.K_SLASH, pygame.K_SPACE,
+        ],
+        "graft and compare": [
+            pygame.K_g, pygame.K_SPACE, pygame.K_v, pygame.K_TAB,
+            pygame.K_SPACE, pygame.K_v, pygame.K_g,
         ],
     }
     for label, script in sessions.items():

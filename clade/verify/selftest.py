@@ -590,8 +590,11 @@ def t_organs_are_wired():
     novent = [t.key for t in BY_KEY.values()
               if t.role == "vent" and t.vent is None]
     check("every vent has a shape", not novent, str(novent))
-    unreachable = set(BY_KEY) - {p["id"] for s in ATLAS.rooms.values()
-                                 for p in s["props"] if p["kind"] == "organ"}
+    # Grafts are made, not found, so they are never "obtainable" and are
+    # registered lazily by key.
+    unreachable = {k for k in BY_KEY if not k.startswith("fuse:")}
+    unreachable -= {p["id"] for s in ATLAS.rooms.values()
+                    for p in s["props"] if p["kind"] == "organ"}
     unreachable -= set(__import__("clade.organs", fromlist=["x"]).STARTING_KEYS)
     unreachable -= {k for sp in bestiary.SPECIES.values() for k in sp.drops}
     check("every organ is obtainable somewhere", not unreachable,
@@ -1198,6 +1201,7 @@ def t_the_tutorial_can_be_completed():
     b.standing_edit = True
     b.editing = 0
     b.tut_shelf = True
+    b.tut_late = True
     b.tutorial.advance(game.body, b)
     check("and doing what it asks reaches the last one",
           b.tutorial.step == len(Tutorial.STEPS) - 1,
@@ -1215,6 +1219,190 @@ def t_sandbox_grants_the_vocabulary():
           "missing %s" % sorted({t.key for t in ALL} - have)[:4])
     check("and opens every socket",
           len(game.body.cells) == GRID_W * GRID_H, str(len(game.body.cells)))
+
+
+# ===========================================================================
+# Legibility, the camera, and the three systems from BENCH.md.
+# ===========================================================================
+
+def t_the_camera_does_not_show_the_whole_level():
+    """At ZOOM 1.0 you could see 83% x 88% of a room, which is most of a
+    level — and nothing can loom if you can already see the far wall."""
+    view_w = C.SCREEN_W / C.ZOOM
+    view_h = C.SCREEN_H / C.ZOOM
+    fw = view_w / (C.ROOM_W * C.TILE)
+    fh = view_h / (C.ROOM_H * C.TILE)
+    check("the camera shows well under half a room",
+          fw < 0.55 and fh < 0.6, "%.0f%% x %.0f%%" % (fw * 100, fh * 100))
+
+
+def t_every_hurt_is_attributed():
+    """'I just keep seeing you come apart' is what happens when a game kills
+    you and never says what did it. There is now exactly one entry point
+    for losing viability, and it records a reason."""
+    import re
+    from ..body import Body
+    b = Body()
+    b.hurt(4.0, "the cold")
+    b.hurt(1.0, "an empty tank")
+    b.hurt(2.0, "the cold")
+    check("damage is logged by cause",
+          b.worst_causes(2)[0] == ("the cold", 6.0), str(b.worst_causes(2)))
+    check("and the most recent one is named",
+          b.recent_cause == "the cold", str(b.recent_cause))
+
+    # Nothing may reduce the *player's* viability behind hurt()'s back.
+    # Creatures subtract their own directly and that is fine: nobody needs
+    # a post-mortem for a lamprey.
+    leaks = []
+    for path in ("clade/player.py", "clade/creatures.py",
+                 "clade/world/live.py", "clade/app.py"):
+        src = open(path).read()
+        for m in re.finditer(r"body\.viability\s*-=", src):
+            leaks.append("%s:%d" % (path, src[:m.start()].count("\n") + 1))
+    body_src = open("clade/body.py").read()
+    direct = len(re.findall(r"self\.viability\s*-=", body_src))
+    if direct != 1:
+        leaks.append("clade/body.py has %d direct writes, expected 1 "
+                     "(the one inside hurt)" % direct)
+    check("nothing subtracts the player's viability except hurt()",
+          not leaks, "; ".join(leaks))
+
+
+def t_standing_chains_change_how_you_move_and_who_notices():
+    """Requested directly: the Bench should make you swim faster, draw
+    things in, and push things off. All three, derived."""
+    def standing(keys, reserve):
+        b = Body()
+        b.reserve = reserve
+        cells = [(1, 2), (2, 2), (3, 2)][:len(keys)]
+        for c, k in zip(cells, keys):
+            b.install(c, make(k))
+        b.standing[0] = Chain(list(cells))
+        return b.recompute_standing(), b
+
+    quick, _ = standing(["siphon", "ganglion", "spine"], Charge(4, 18, 4, 10))
+    check("a nerve chain genuinely makes you faster", quick["speed"] > 0.15,
+          "%+.0f%%" % (quick["speed"] * 100))
+
+    heavy, _ = standing(["siphon", "brackish", "salt_node"],
+                        Charge(6, 4, 20, 4))
+    check("a weight chain genuinely makes you slower", heavy["speed"] < -0.1,
+          "%+.0f%%" % (heavy["speed"] * 100))
+
+    burn, _ = standing(["siphon", "kiln", "ember_gland"], Charge(20, 6, 6, 4))
+    quiet, _ = standing(["siphon", "harmonic"], Charge(9, 9, 9, 9))
+    check("a burning chain draws things to you",
+          burn["lure"] > quiet["lure"] * 3.0,
+          "lure %.1f vs %.1f" % (burn["lure"], quiet["lure"]))
+
+    rot, _ = standing(["siphon", "bloom", "kiln"], Charge(8, 10, 12, 4))
+    check("a rotting chain pushes things off you",
+          rot["ward"] > 1.5 and rot["ward"] > quiet["ward"] * 3.0,
+          "ward %.1f vs %.1f" % (rot["ward"], quiet["ward"]))
+
+
+def t_kinship_is_camouflage():
+    """Build yourself out of what lives here and what lives here minds you
+    less. The game's thesis, made mechanical."""
+    from ..creatures import Creature
+
+    class _P:
+        def __init__(self, comp):
+            self.pos = (260.0, 0.0)
+            self.vel = [0.0, 0.0]
+            self.body = starting_body()
+            self.body.reserve = comp
+            self.body.recompute_standing()
+
+    w = FakeWorld()
+    sp = bestiary.get("silt_mother")
+    like = Creature(sp, (0.0, 0.0))
+    unlike = Creature(sp, (0.0, 0.0))
+    silt_body = _P(Charge(3, 3, 30, 3))
+    hot_body = _P(Charge(3, 30, 3, 3))
+    check("a body made of the local humour reads as kin",
+          like.kinship(silt_body) > 0.6, "%.2f" % like.kinship(silt_body))
+    check("a body made of something else does not",
+          unlike.kinship(hot_body) < 0.3, "%.2f" % unlike.kinship(hot_body))
+    for _ in range(120):
+        like.sense(w, silt_body, 1 / 60.0)
+        unlike.sense(w, hot_body, 1 / 60.0)
+    check("and kin are noticed far less", like.alarm < unlike.alarm * 0.75,
+          "alarm %.2f vs %.2f" % (like.alarm, unlike.alarm))
+
+
+def t_four_ways_of_seeing():
+    """Four standing chains, four different perceptions, no new rules."""
+    seen = {}
+    for keys, reserve in (
+            (["siphon", "ganglion", "spine"], Charge(4, 18, 4, 10)),
+            (["siphon", "kiln", "ember_gland"], Charge(20, 6, 6, 4)),
+            (["siphon", "settling_sac", "bloom"], Charge(6, 6, 20, 4)),
+            (["siphon", "brackish", "salt_node"], Charge(6, 4, 20, 4))):
+        b = Body()
+        b.reserve = reserve
+        cells = [(1, 2), (2, 2), (3, 2)][:len(keys)]
+        for c, k in zip(cells, keys):
+            b.install(c, make(k))
+        b.standing[0] = Chain(list(cells))
+        b.recompute_standing()
+        mode = b.sense_mode
+        if mode:
+            seen[mode[0]] = b.senses()
+    check("four standing chains give four different senses",
+          len(seen) == 4, str(sorted(seen)))
+    if "pressure" in seen and "nerve" in seen:
+        p, n = seen["pressure"], seen["nerve"]
+        check("pressure shows the room and not what is in it",
+              p["geometry"] > p["creature"] * 2.0,
+              "geometry %.0f vs creature %.0f" % (p["geometry"], p["creature"]))
+        check("nerve shows what is in it and not the room",
+              n["creature"] > n["geometry"] * 2.0,
+              "creature %.0f vs geometry %.0f" % (n["creature"], n["geometry"]))
+    if "displacement" in seen:
+        check("displacement reports only what moves",
+              seen["displacement"]["moving_only"])
+
+
+def t_fusion_composes_and_survives_a_save():
+    from ..organs import BY_KEY as OBK, can_fuse, fuse_key
+    key = fuse_key("salt_node", "kiln")
+    o = make(key)
+    check("two transforms grow into one organ", o.role == "transform")
+    check("and it costs the heat of both",
+          abs(o.type.heat - (OBK["salt_node"].heat + OBK["kiln"].heat)) < 1e-6)
+
+    water = Charge(24, 5, 6, 4)
+    pair, _ = run_chain(["siphon", "salt_node", "kiln", "spiracle"],
+                        water.copy())
+    graft, _ = run_chain(["siphon", key, "spiracle"], water.copy())
+    ratio = total(graft, "damage") / max(0.01, total(pair, "damage"))
+    check("a graft keeps most of the pair, in half the sockets",
+          0.6 < ratio < 1.0, "%.0f%% in one socket instead of two"
+          % (ratio * 100))
+
+    del OBK[key]
+    check("and it rebuilds itself from its key alone",
+          make(key).name == o.name)
+    ok, why = can_fuse(OBK["siphon"], OBK["kiln"])
+    check("intakes and vents refuse to graft", not ok, why)
+
+
+def t_the_rules_page_renders_every_state():
+    from ..app import Game, RULES
+    from ..screens.rules import PAGES, draw as draw_rules
+    screen = pygame.display.set_mode((C.SCREEN_W, C.SCREEN_H))
+    for sandbox in (False, True):
+        game = Game(screen, headless=True, sandbox=sandbox)
+        game.body.hurt(9.0, "the cold")
+        for room in ("n_caul", "c_mouth", "l_rack", "s_lip"):
+            game.world.enter_room(room)
+            game.update(1 / 60.0)
+            for page in range(len(PAGES)):
+                draw_rules(screen, game, page)
+    check("the rules page draws in every region, on both pages", True,
+          "%d pages" % len(PAGES))
 
 
 def t_criterion_is_stated_once():

@@ -159,15 +159,17 @@ the player to remember four numbers between two screens. Cost: trivial.
 
 ---
 
-## 4. What I would build next, in order
+## 4. What I said I would build next — and did
 
-| | proposal | why it is first |
+| | proposal | status |
 |---|---|---|
-| 1 | **B1** perception modes | four different games from one rule set; the largest utility gain available |
-| 2 | **D1** creatures read your composition | twenty lines, and it makes the game's thesis mechanical |
-| 3 | **A3** organ fusion | gives the pack a purpose and the late game a goal |
-| 4 | **E1/E2** loadouts and diff | trivial, and they make everything above legible |
-| 5 | **C1** building terrain | the biggest, and it wants the others in place first |
+| 1 | **B1** perception modes | **built.** nerve, weight, sediment and heat each see a different world |
+| 2 | **D1** creatures read your composition | **built.** kinship; a silt body in the Cisterns is noticed half as much |
+| 3 | **A3** organ fusion | **built.** `G` grafts two transforms into one socket at 86% |
+| 4 | **E2** the diff | **built.** `V` holds an assay and notches it onto the next one |
+| — | **speed / lure / ward** | **built**, on request — derived, not stats |
+| 5 | **E1** named loadouts | not yet. trivial whenever it is wanted |
+| 6 | **C1** building terrain | not yet. the biggest, and it wanted the others in place first |
 
 ---
 

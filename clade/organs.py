@@ -607,8 +607,65 @@ VENTS = [t for t in ALL if t.role == VENT]
 STARTING_KEYS = ["siphon", "kiln", "salt_node", "spiracle", "settling_sac"]
 
 
+# ---------------------------------------------------------------------------
+# Fusion.
+#
+# Two organs grown into one socket. The fused transform is literally the
+# composition of the two functions, in order, with a loss — so it needs no
+# new rules, cannot be balanced separately from its parts, and stays true
+# if either parent is ever retuned.
+#
+# The key encodes its parents ("fuse:kiln+salt_node"), which means a save
+# file needs to store nothing extra and a fused organ rebuilds itself on
+# load. That is the whole reason for the string format.
+# ---------------------------------------------------------------------------
+
+FUSE_LOSS = 0.86
+
+
+def can_fuse(a: OrganType, b: OrganType):
+    if a.role != TRANSFORM or b.role != TRANSFORM:
+        return False, "only the things in the middle can be grown together"
+    if a.key.startswith("fuse:") or b.key.startswith("fuse:"):
+        return False, "a graft will not take a second graft"
+    if a.key == b.key:
+        return False, "it will not grow into itself"
+    return True, "ready"
+
+
+def fuse_key(a_key, b_key):
+    return "fuse:%s+%s" % (a_key, b_key)
+
+
+def _build_fused(key: str) -> OrganType:
+    a_key, b_key = key[len("fuse:"):].split("+", 1)
+    a, b = BY_KEY[a_key], BY_KEY[b_key]
+
+    def _fn(charge, ctx, _a=a, _b=b):
+        charge = _a.fn(charge, ctx)
+        charge = _b.fn(charge, ctx)
+        charge.scale_in_place(FUSE_LOSS)
+        return charge
+
+    t = OrganType(
+        key, "%s-%s" % (a.name.split()[0], b.name.split()[0]), TRANSFORM,
+        (a.glyph + b.glyph)[:2], a.heat + b.heat,
+        max(a.tier, b.tier),
+        "two organs grown into one. it does what %s did and then what %s "
+        "did, in that order, and it keeps a little less of it than they "
+        "would have." % (a.name, b.name),
+        _fn)
+    BY_KEY[key] = t
+    return t
+
+
 def make(key: str) -> Organ:
-    return Organ(BY_KEY[key])
+    t = BY_KEY.get(key)
+    if t is None and key.startswith("fuse:"):
+        t = _build_fused(key)
+    if t is None:
+        raise KeyError(key)
+    return Organ(t)
 
 
 def drops_for_tier(max_tier: int, rng, n: int = 1) -> list:

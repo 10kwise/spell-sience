@@ -170,10 +170,18 @@ class Camera:
 
 
 class DarkRenderer:
+    """Everything world-space is drawn into a buffer 1/ZOOM the size of the
+    window and scaled up at the end. That gives the zoom for free and
+    applies it uniformly — geometry, creatures, lights, silt and snow all
+    scale together, and nothing has to know about it. The HUD is drawn on
+    the window afterwards, so text stays sharp."""
+
     def __init__(self, size):
-        self.w, self.h = size
-        self.lw = self.w // C.LIGHT_SCALE
-        self.lh = self.h // C.LIGHT_SCALE
+        self.out_w, self.out_h = size
+        self.w = int(size[0] / C.ZOOM)
+        self.h = int(size[1] / C.ZOOM)
+        self.lw = max(8, self.w // C.LIGHT_SCALE)
+        self.lh = max(8, self.h // C.LIGHT_SCALE)
         self.light = pygame.Surface((self.lw, self.lh))
         self.scratch = pygame.Surface((self.w, self.h))
         self.fog = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
@@ -231,12 +239,32 @@ class DarkRenderer:
         self._murk_pass(room, off)
         self._snow_pass(room, off, dt)
 
-        screen.blit(self.scratch, (0, 0))
+        if (self.w, self.h) == (self.out_w, self.out_h):
+            screen.blit(self.scratch, (0, 0))
+        else:
+            pygame.transform.scale(self.scratch, (self.out_w, self.out_h),
+                                   screen)
         return off
+
+    SENSE_TINT = {
+        "pressure": (96, 128, 168),
+        "nerve": (176, 132, 226),
+        "displacement": (150, 140, 118),
+        "light": (240, 196, 150),
+    }
 
     def _light_pass(self, world, player, off):
         room = world.room
         b = player.body
+
+        # Pressure sense and the like light the *geometry* without lighting
+        # anything alive in it, so this goes into the lightmap while the
+        # creature pass below reads a different radius entirely.
+        senses = b.senses()
+        extra = senses["geometry"] - b.sight
+        if extra > 20.0:
+            tint = self.SENSE_TINT.get(senses["mode"], (120, 140, 160))
+            self._add_light(player.pos, senses["geometry"], tint, off, 0.30)
 
         # You. Colour comes from your own composition, so a body full of
         # heat burns orange and a body full of sediment barely burns at all
@@ -402,7 +430,8 @@ class DarkRenderer:
 
     def _entities(self, world, player, off):
         surf = self.scratch
-        sight = player.sight
+        senses = player.body.senses()
+        sight = senses["creature"]
 
         for cp in world.corpses:
             p = (int(cp.pos[0] - off[0]), int(cp.pos[1] - off[1]))
@@ -422,7 +451,7 @@ class DarkRenderer:
         for c in world.creatures:
             if c.dead:
                 continue
-            self._creature(surf, c, player, world, off, sight)
+            self._creature(surf, c, player, world, off, sight, senses)
 
         self._player(surf, player, world, off)
 
@@ -476,7 +505,13 @@ class DarkRenderer:
         if not friendly:
             pygame.draw.circle(surf, (255, 210, 210), p, max(1, r // 2))
 
-    def _creature(self, surf, c, player, world, off, sight):
+    def _creature(self, surf, c, player, world, off, sight, senses=None):
+        senses = senses or {"mode": None, "moving_only": False}
+        if senses["moving_only"]:
+            # Displacement sense reports water being moved, and nothing
+            # else. A creature holding still is not quiet, it is *absent*.
+            if math.hypot(c.vel[0], c.vel[1]) < 22.0:
+                sight = min(sight, player.body.sight)
         if c.hidden:
             # Motionless ambusher. Not drawn at all — the only trace is the
             # silt it is sitting in, and the shape of what the silt is
@@ -505,6 +540,21 @@ class DarkRenderer:
                 pygame.draw.circle(s, (0, 0, 0, int(150 * k)),
                                    (r * 2, r * 2), int(r * 1.5))
                 surf.blit(s, (p[0] - r * 2, p[1] - r * 2))
+            return
+
+        mode = senses.get("mode")
+        if mode in ("nerve", "displacement") and d > player.body.sight:
+            # Seen by a sense that is not light: an outline and a heading,
+            # no body. You know it is there and what it is doing; you do
+            # not know what it looks like.
+            col = self.SENSE_TINT[mode]
+            k = max(0.25, 1.0 - d / max(1.0, sight))
+            pygame.draw.circle(surf, _tint(col, k), p, r + 2, 2)
+            f = c.facing
+            pygame.draw.line(surf, _tint(col, k * 0.8), p,
+                             (p[0] + int(f[0] * (r + 10)),
+                              p[1] + int(f[1] * (r + 10))), 1)
+            self._attack_tell(surf, c, p, r)
             return
 
         base = c.composition.color()

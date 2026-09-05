@@ -370,8 +370,10 @@ class World:
             d = math.hypot(self.player.pos[0] - pos[0], self.player.pos[1] - pos[1])
             if d <= r + 12.0:
                 if hostile:
+                    src = getattr(em.source, "sp", None)
                     self.player.take_damage(
-                        eff.damage * C.HOSTILE_DAMAGE, self, pos)
+                        eff.damage * C.HOSTILE_DAMAGE, self, pos,
+                        cause=src.name if src else "something")
                 elif eff.gentle > 0.4:
                     self.body.viability = min(
                         C.VIABILITY_MAX, self.body.viability + eff.gentle * 0.9)
@@ -410,11 +412,13 @@ class World:
 
         if deficit > 0.02:
             if "chill" in hz:
-                player.take_damage(hz["chill"] * deficit * dt, self)
+                player.take_damage(hz["chill"] * deficit * dt, self,
+                                   cause="the cold")
                 player.vel[0] *= (1.0 - (1.0 - hz["slow"]) * deficit * dt * 4)
                 player.vel[1] *= (1.0 - (1.0 - hz["slow"]) * deficit * dt * 4)
             if "shock" in hz:
-                player.take_damage(hz["shock"] * deficit * dt, self)
+                player.take_damage(hz["shock"] * deficit * dt, self,
+                                   cause="the live water")
             if "clog" in hz:
                 body.clog = hz["clog"] * deficit
 
@@ -507,7 +511,9 @@ class World:
             dx = p.pos[0] - m.pos[0]
             dy = p.pos[1] - m.pos[1]
             if dx * dx + dy * dy <= r * r:
-                p.take_damage(m.effect.damage * C.HOSTILE_DAMAGE, self, m.pos)
+                src = getattr(m.source, "sp", None)
+                p.take_damage(m.effect.damage * C.HOSTILE_DAMAGE, self, m.pos,
+                              cause=src.name if src else "something")
                 if abs(m.effect.force) > 30.0:
                     d = math.hypot(dx, dy) + 1e-6
                     k = m.effect.force / 90.0

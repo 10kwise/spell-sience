@@ -14,6 +14,17 @@ FPS = 60
 # gives soft falloff for the price of a 256x152 blit.
 LIGHT_SCALE = 5
 
+# How far in the camera sits. The world is rendered to a buffer this many
+# times smaller than the window and scaled up, so the whole scene zooms
+# together — geometry, creatures, light, silt and snow — while the HUD,
+# which is drawn afterwards, stays crisp.
+#
+# At 1.0 you could see 83% x 88% of a room at once, which is most of a
+# level, and it made the dark pointless: nothing can loom if you can
+# already see the far wall. At 1.75 you see under a third of a room and
+# have to go and look.
+ZOOM = 1.75
+
 TILE = 32                      # px per solid tile
 ROOM_W, ROOM_H = 48, 27        # tiles per room -> 1536 x 864 px, wider than
                                # the screen, so the camera has somewhere to go
