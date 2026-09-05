@@ -36,6 +36,8 @@ class FakeWorld:
     a Leech finds something, because a stub that quietly returns None turns
     'the Lamprey cannot attack' into 'the test passes'."""
 
+    _room = None
+
     def __init__(self):
         self.disturbance = 0.0
         self.player = None
@@ -43,6 +45,14 @@ class FakeWorld:
         self.creatures = []
         self.loudest_point = None
         self.events = []
+        # A real room, built once and shared. Creatures stir the water while
+        # they wind up, so a stub without fields is a stub that cannot run
+        # an attack — and a test that quietly skips the attack it is meant
+        # to be checking is worse than no test.
+        if FakeWorld._room is None:
+            from ..world.room import Room
+            FakeWorld._room = Room("stub", ATLAS.spec("n_caul"))
+        self.room = FakeWorld._room
 
     def add_disturbance(self, a, pos=None):
         self.disturbance += a
@@ -802,6 +812,241 @@ def t_no_room_strands_you():
             # from the inside, which they are, but worth naming.
             pass
     check("every room has a way out", not bad, "; ".join(bad[:3]))
+
+
+# ===========================================================================
+# The overhaul: upkeep, standing chains, region hazards, and a combat
+# grammar. Every check below is a claim the first build could not have
+# made.
+# ===========================================================================
+
+def t_nothing_is_free():
+    """The original sin of the first build: ambient water refilled you
+    faster than you could spend it, so nothing was scarce and there was no
+    reason to do anything. Ambient uptake must not cover a working body."""
+    b = starting_body()
+    b.recompute_standing()
+    check("a body with one standing chain costs more than ambient water "
+          "gives back", b.upkeep > b.absorb_rate * 0.55,
+          "upkeep %.2f/s vs absorb %.2f/s" % (b.upkeep, b.absorb_rate))
+
+    b2 = Body()
+    b2.reserve = Charge(25, 25, 25, 25)
+    start = b2.reserve.magnitude
+    for _ in range(600):
+        b2.update(1 / 60.0)
+    drained = start - b2.reserve.magnitude
+    check("just being awake drains the tank", drained > 3.0,
+          "%.1f in ten seconds" % drained)
+
+
+def t_feeding_is_the_answer():
+    from ..world.live import Corpse
+    b = Body()
+    b.reserve = Charge(1, 1, 1, 1)
+    corpse = Corpse((0, 0), Charge(14, 14, 8, 6), [], "test")
+    before = b.reserve.magnitude
+    for _ in range(60):
+        b.feed(corpse.drain(C.BITE_RATE / 60.0))
+    gained = b.reserve.magnitude - before
+    check("one second of feeding is worth many seconds of upkeep",
+          gained > C.BASE_UPKEEP * 8, "%.1f reserve in one second" % gained)
+
+
+def t_standing_chains_do_body_things():
+    """The answer to 'the Bench is only a weapon designer'. Six chains, six
+    genuinely different things done to the body that owns them, all read
+    off the same effect rules the weapons use."""
+    def standing(keys, reserve):
+        b = Body()
+        b.reserve = reserve
+        cells = [(1, 2), (2, 2), (3, 2)][:len(keys)]
+        for c, k in zip(cells, keys):
+            b.install(c, make(k))
+        b.standing[0] = Chain(list(cells))
+        ok, why = b.validate(b.standing[0], standing=True)
+        if not ok:
+            return None, why
+        return b.recompute_standing(), b
+
+    warm, _ = standing(["siphon", "kiln", "ember_gland"], Charge(22, 6, 6, 4))
+    check("a burning standing chain makes real heat", warm["heat"] > 1.0,
+          "heat=%.2f" % warm["heat"])
+
+    haze, _ = standing(["siphon", "settling_sac", "bloom"], Charge(6, 6, 22, 4))
+    check("a sediment standing chain hazes you", haze["murk"] > 1.0,
+          "murk=%.2f" % haze["murk"])
+
+    tend, _ = standing(["siphon", "harmonic"], Charge(9, 9, 9, 9))
+    check("a balanced standing chain tends you", tend["gentle"] > 1.0,
+          "gentle=%.2f" % tend["gentle"])
+
+    up, _ = standing(["siphon", "mirror_sac", "salt_node"],
+                     Charge(26, 4, 6, 4))
+    check("an inverted-brine standing chain is traversal", up["lift"] > 3.0,
+          "lift=%.2f" % up["lift"])
+
+    quick, _ = standing(["siphon", "ganglion", "spine"], Charge(4, 18, 4, 10))
+    check("a nerve standing chain makes you quicker", quick["jolt"] > 1.0,
+          "jolt=%.2f" % quick["jolt"])
+
+    check("and every one of them costs upkeep",
+          all(x is not None for x in (warm, haze, tend, up, quick)))
+
+
+def t_a_standing_chain_runs_all_its_organs():
+    """The bug that made the Cisterns unsolvable: standing chains were
+    sliced organs[1:-1], copied from the active path where the last organ
+    is a vent. A standing chain has no vent, so its final stage — usually
+    the Harmonic, usually the entire point — never ran."""
+    b = Body()
+    b.reserve = Charge(6, 22, 8, 4)
+    for c, k in ((1, 2), "siphon"), ((2, 2), "sieve"), ((3, 2), "harmonic"):
+        b.install(c, make(k))
+    b.standing[0] = Chain([(1, 2), (2, 2), (3, 2)])
+    fx = b.recompute_standing()
+    check("the last organ of a standing chain actually runs",
+          fx["gentle"] > 0.8, "gentle=%.2f" % fx["gentle"])
+
+
+def t_every_region_hazard_has_an_answer():
+    """Below the Nursery you cannot merely survive being somewhere: each
+    region applies a pressure exactly one standing build answers. And the
+    wrong build must genuinely fail, or the choice is decoration."""
+    from ..app import Game, PLAY
+    screen = pygame.display.set_mode((C.SCREEN_W, C.SCREEN_H))
+
+    def trial(room, keys):
+        g = Game(screen, headless=True)
+        g.state = PLAY
+        cells = [(0, 3), (1, 3), (2, 3), (3, 3)][:len(keys)]
+        for c in cells:
+            g.body.unlock(c)
+        for c, k in zip(cells, keys):
+            if g.body.organ_at(c) is not None:
+                g.body.uninstall(c)
+            g.body.install(c, make(k))
+        g.body.standing[0] = Chain(list(cells))
+        g.world.enter_room(room)
+        # A body that has been in this region is full of this region's
+        # water. Testing with the starting tank still full of warm Nursery
+        # water measures the wrong thing entirely — it lets a chain that
+        # makes no heat at all look like an answer to the cold.
+        reg = ATLAS.rooms[room]["region"]
+        g.body.reserve = Charge.of(REGIONS[reg]["water"]).scaled(2.4)
+        g.player.pos = list(g._spawn_point())
+        v0 = g.body.viability
+        for _ in range(420):
+            g.update(1 / 60.0)
+        return v0 - g.body.viability, g.world.hazard_bite, g.body.clog
+
+    cases = [
+        ("sill", "cold", ["siphon", "kiln", "ember_gland"],
+         ["siphon", "settling_sac"]),
+        ("lattice", "live water", ["siphon", "settling_sac", "bloom"],
+         ["siphon", "kiln", "ember_gland"]),
+        ("cisterns", "clogging", ["siphon", "sieve", "harmonic"],
+         ["siphon", "bloom"]),
+    ]
+    rooms = {"sill": "s_lip", "lattice": "l_rack", "cisterns": "c_mouth"}
+    for region, label, right, wrong in cases:
+        lost_r, bite_r, clog_r = trial(rooms[region], right)
+        lost_w, bite_w, clog_w = trial(rooms[region], wrong)
+        check("%s: the right standing chain answers it" % label,
+              bite_r < 0.2, "bite %.2f (lost %.1f viability)" % (bite_r, lost_r))
+        check("%s: the wrong one does not" % label, bite_w > 0.5,
+              "bite %.2f (lost %.1f viability)" % (bite_w, lost_w))
+
+
+def t_attacks_are_telegraphed():
+    """No attack may be instant. Windup is the only reason a fight is
+    something you can play rather than something that happens to you."""
+    instant = [k for k, sp in bestiary.SPECIES.items()
+               if sp.chain and sp.windup < 0.3]
+    check("every armed creature winds up before it commits", not instant,
+          str(instant))
+    noreco = [k for k, sp in bestiary.SPECIES.items()
+              if sp.chain and sp.recover < 0.5]
+    check("and every one of them has a recovery you can punish", not noreco,
+          str(noreco))
+    archetypes = {sp.attack for sp in bestiary.SPECIES.values() if sp.chain}
+    check("the roster uses several different attacks, not one",
+          len(archetypes) >= 5, str(sorted(archetypes)))
+    behaviours = {sp.behaviour for sp in bestiary.SPECIES.values()}
+    check("and several different behaviours", len(behaviours) >= 10,
+          "%d" % len(behaviours))
+
+
+def t_the_cycle_actually_runs():
+    from ..creatures import COMMIT, Creature, RECOVER, WINDUP
+    sp = bestiary.get("nurse")
+    c = Creature(sp, (0, 0))
+    w = FakeWorld()
+    out = []
+
+    class _P:
+        pos = (120.0, 0.0)
+        vel = [0.0, 0.0]
+    seen = []
+    c.cooldown = 0.0          # creatures spawn with a random first delay
+    c.begin_attack()
+    for _ in range(400):
+        c._advance_phase(1 / 60.0, w, _P(), out)
+        if c.phase and (not seen or seen[-1] != c.phase):
+            seen.append(c.phase)
+        if c.phase is None and seen:
+            break
+    check("an attack passes through windup, commit and recovery in order",
+          seen == [WINDUP, COMMIT, RECOVER], str(seen))
+    check("and it produced a real emission", out and out[0].effect.damage > 0)
+
+
+def t_recovery_is_a_punish_window():
+    from ..creatures import Creature, RECOVER
+    w = FakeWorld()
+    sp = bestiary.get("ossuary")
+    normal = Creature(sp, (0, 0))
+    open_ = Creature(sp, (0, 0))
+    open_.phase = RECOVER
+    open_.phase_len = open_.phase_t = 1.0
+    hit = resolve(Charge(0, 9, 0, 0))
+    a = normal.take(hit, w, (10, 0))
+    b = open_.take(resolve(Charge(0, 9, 0, 0)), w, (10, 0))
+    check("hitting an armoured thing mid-recovery is worth far more",
+          b > a * 2.5, "%.1f vs %.1f" % (b, a))
+
+
+def t_the_player_is_findable_when_they_move():
+    """'You just sprint around and they do nothing' was the sharpest thing
+    said about the first build, and it was true: nothing in perception
+    looked at velocity."""
+    from ..creatures import Creature
+
+    class _P:
+        def __init__(self, speed):
+            self.pos = (300.0, 0.0)
+            self.vel = [speed, 0.0]
+            self.body = starting_body()
+
+    w = FakeWorld()
+    still = Creature(bestiary.get("nurse"), (0.0, 0.0))
+    fast = Creature(bestiary.get("nurse"), (0.0, 0.0))
+    for _ in range(90):
+        still.sense(w, _P(0.0), 1 / 60.0)
+        fast.sense(w, _P(C.PLAYER_MAX_SPEED), 1 / 60.0)
+    check("moving fast makes you much easier to find than holding still",
+          fast.alarm > still.alarm * 1.6,
+          "alarm %.2f moving vs %.2f still" % (fast.alarm, still.alarm))
+
+
+def t_a_motionless_ambusher_is_invisible():
+    from ..creatures import Creature
+    c = Creature(bestiary.get("silt_mother"), (0, 0))
+    c.still_time = 3.0
+    check("a silt mother that has stopped moving cannot be seen at all",
+          c.hidden)
+    c.still_time = 0.0
+    check("...and can be, the moment it moves", not c.hidden)
 
 
 def t_criterion_is_stated_once():

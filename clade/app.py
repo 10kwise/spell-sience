@@ -105,6 +105,16 @@ class Game:
         free.sort(key=lambda c: (c[0] - cx) ** 2 + (c[1] - cy) ** 2)
         return room.px_of(*free[0])
 
+    def enter_bench(self):
+        self.state = BENCH
+        self.bench._run_assay()
+
+    def leave_bench(self):
+        """Back to the water. Chains that stopped being chains during
+        surgery are left broken on purpose — the slot shows red and fixing
+        it is the player's problem, not a silent auto-repair."""
+        self.state = PLAY
+
     def notice(self, msg):
         self.notices.append([msg, 0.0])
         if len(self.notices) > 5:
@@ -173,8 +183,7 @@ class Game:
                 self.state = TITLE
                 self.title_index = 0
             elif k == pygame.K_TAB:
-                self.state = BENCH
-                self.bench._run_assay()
+                self.enter_bench()
             elif k == pygame.K_c:
                 self.state = CODEX
                 self.codex_page = 0

@@ -44,7 +44,9 @@ class BenchScreen:
         self.sel_cell = None
         self.sel_pack = None
         self.routing = None          # chain index being routed
+        self.routing_standing = False
         self.route = []
+        self.assay_standing = False
         self.assay = None            # (stages, effect) of the last run
         self.assay_chain = 0
         self.message = ""
@@ -148,45 +150,69 @@ class BenchScreen:
                 self.say("")
             else:
                 self.game.leave_bench()
-        elif pygame.K_1 <= k <= pygame.K_4:
+        elif pygame.K_1 <= k <= pygame.K_6:
             i = k - pygame.K_1
-            if self.routing == i:
-                self._commit_route(i)
+            standing = i >= 4
+            slot = i - 4 if standing else i
+            same = (self.routing == slot and self.routing_standing == standing)
+            if same:
+                self._commit_route(slot, standing)
             else:
-                self.routing = i
-                self.route = list(self.body.chains[i].cells)
-                self.assay_chain = i
-                self.say("routing chain %d — click sockets in order, %d again "
-                         "to keep it" % (i + 1, i + 1))
+                self.routing = slot
+                self.routing_standing = standing
+                pool = self.body.standing if standing else self.body.chains
+                self.route = list(pool[slot].cells)
+                self.assay_chain = slot
+                self.assay_standing = standing
+                if standing:
+                    self.say("routing STANDING chain %d — no vent. it runs "
+                             "all the time and it feeds you, not the water. "
+                             "%d again to keep it" % (i + 1, i + 1))
+                else:
+                    self.say("routing chain %d — click sockets in order, %d "
+                             "again to keep it" % (i + 1, i + 1))
         elif k == pygame.K_RETURN:
             if self.routing is not None:
-                self._commit_route(self.routing)
+                self._commit_route(self.routing, self.routing_standing)
         elif k == pygame.K_BACKSPACE:
             if self.routing is not None and self.route:
                 self.route.pop()
         elif k == pygame.K_SPACE:
             self._run_assay()
         elif k == pygame.K_TAB:
-            self.assay_chain = (self.assay_chain + 1) % 4
+            if self.assay_standing:
+                self.assay_standing = False
+                self.assay_chain = 0
+            else:
+                self.assay_chain += 1
+                if self.assay_chain >= 4:
+                    self.assay_chain = 0
+                    self.assay_standing = True
             self._run_assay()
 
-    def _commit_route(self, i):
-        ch = Chain(list(self.route), self.body.chains[i].name)
-        ok, why = self.body.validate(ch)
+    def _commit_route(self, i, standing=False):
+        pool = self.body.standing if standing else self.body.chains
+        ch = Chain(list(self.route), pool[i].name)
+        ok, why = self.body.validate(ch, standing=standing)
         if not ok:
             self.say(why)
             return
-        self.body.chains[i] = ch
+        pool[i] = ch
         self.routing = None
+        self.routing_standing = False
         self.route = []
         self.assay_chain = i
-        self.say("chain %d set" % (i + 1))
+        self.assay_standing = standing
+        self.body.recompute_standing()
+        self.say("%s %d set" % ("standing chain" if standing else "chain",
+                                i + (5 if standing else 1)))
         self._run_assay()
 
     def _prune_chains(self, cell):
-        for ch in self.body.chains:
+        for ch in list(self.body.chains) + list(self.body.standing):
             if cell in ch.cells:
                 ch.cells = []
+        self.body.recompute_standing()
 
     # --------------------------------------------------------------- assay
 
@@ -197,8 +223,9 @@ class BenchScreen:
         whatever you happen to be carrying — which is what makes the Assay
         a measurement of the *chain* rather than of your current lunch."""
         i = self.assay_chain
-        ch = self.body.chains[i]
-        ok, why = self.body.validate(ch)
+        standing = self.assay_standing
+        ch = (self.body.standing if standing else self.body.chains)[i]
+        ok, why = self.body.validate(ch, standing=standing)
         if not ok:
             self.assay = None
             self.say(why)
@@ -208,19 +235,21 @@ class BenchScreen:
         stages = []
         charge = organs[0].apply(Charge(), ctx)
         stages.append((organs[0].name, charge.copy()))
-        for o in organs[1:-1]:
+        middle = organs[1:] if standing else organs[1:-1]
+        for o in middle:
             if o.type.key == "bladder":
                 stages.append((o.name + " (holds)", charge.copy()))
                 continue
             charge = o.apply(charge, ctx)
             stages.append((o.name, charge.copy()))
         for _ in range(ctx.recursions):
-            for o in organs[1:-1]:
+            for o in middle:
                 if o.type.key == "bladder":
                     continue
                 charge = o.apply(charge, ctx)
             stages.append(("(again)", charge.copy()))
-        stages.append((organs[-1].name, charge.copy()))
+        if not standing:
+            stages.append((organs[-1].name, charge.copy()))
         self.assay = (stages, resolve(charge), ctx)
         for o in organs:
             self.game.codex.see_organ(o.key)
@@ -234,8 +263,8 @@ class BenchScreen:
         surf.fill((11, 13, 16))
         w, h = surf.get_size()
         text(surf, "THE BENCH", (60, 44), 40, (200, 210, 220), bold=True)
-        text(surf, "right-click a socket to remove.  1-4 route a chain.  "
-                   "space assays it.  esc leaves.",
+        text(surf, "right-click a socket to remove.   1-4 route a fired "
+                   "chain, 5-6 a standing one.   space assays.   esc leaves.",
              (60, 84), 18, (100, 110, 120))
 
         self._draw_grid(surf)
@@ -251,7 +280,12 @@ class BenchScreen:
     def _draw_grid(self, surf):
         body = self.body
         route = self.route if self.routing is not None else None
-        active = route if route is not None else body.chains[self.assay_chain].cells
+        if route is not None:
+            active = route
+        elif self.assay_standing:
+            active = body.standing[self.assay_chain].cells
+        else:
+            active = body.chains[self.assay_chain].cells
 
         # The route, drawn under the cells so it reads as plumbing.
         for a, b in zip(active, active[1:]):
@@ -313,13 +347,13 @@ class BenchScreen:
         # under the grid belongs to whatever is selected, and the two were
         # drawing on top of each other.
         cx = ox + GRID_W * (CELL + PAD) + 46
-        text(surf, "CHAINS", (cx, oy - 22), 24, (160, 172, 182), bold=True)
+        text(surf, "FIRED", (cx, oy - 22), 24, (160, 172, 182), bold=True)
         for i in range(4):
             ch = body.chains[i]
             ok, why = body.validate(ch)
             organs = body.chain_organs(ch) if ok else None
             y = oy + 6 + i * 46
-            sel = i == self.assay_chain
+            sel = (i == self.assay_chain) and not self.assay_standing
             col = (200, 210, 220) if ok else (104, 96, 96)
             if sel:
                 pygame.draw.rect(surf, (30, 35, 40),
@@ -332,8 +366,56 @@ class BenchScreen:
             if organs:
                 names = " > ".join(o.name.lower() for o in organs)
                 if len(names) > 40:
-                    names = names[:39] + "…"
+                    names = names[:39] + "..."
                 text(surf, names, (cx + 26, y + 22), 15, (96, 106, 116))
+
+        # Standing chains. The whole reason this screen is not a gun menu.
+        sy = oy + 6 + 4 * 46 + 24
+        text(surf, "RUNNING", (cx, sy - 30), 24, (150, 186, 176), bold=True)
+        text(surf, "no vent. always on. it feeds you, not the water.",
+             (cx, sy - 8), 16, (96, 116, 110))
+        for i in range(len(body.standing)):
+            ch = body.standing[i]
+            ok, why = body.validate(ch, standing=True)
+            organs = body.chain_organs(ch) if ok else None
+            y = sy + 18 + i * 46
+            sel = (i == self.assay_chain) and self.assay_standing
+            col = (186, 216, 206) if ok else (104, 96, 96)
+            if sel:
+                pygame.draw.rect(surf, (28, 38, 36),
+                                 pygame.Rect(cx - 8, y - 6, 300, 40),
+                                 border_radius=4)
+            text(surf, str(5 + i), (cx, y), 24,
+                 (200, 226, 216) if sel else (108, 128, 122))
+            label = "  ".join(o.glyph for o in organs) if organs else why
+            text(surf, label, (cx + 26, y + 2), 22 if organs else 17, col)
+            if organs:
+                names = " > ".join(o.name.lower() for o in organs)
+                if len(names) > 40:
+                    names = names[:39] + "..."
+                text(surf, names, (cx + 26, y + 22), 15, (92, 112, 106))
+
+        fx = body.standing_fx
+        y = sy + 18 + len(body.standing) * 46 + 10
+        text(surf, "upkeep  %.2f / sec" % body.upkeep, (cx, y), 20,
+             (150, 160, 170) if body.upkeep < 1.2 else (222, 158, 118))
+        bits = []
+        for label, key, thresh in (("burning", "heat", 0.3),
+                                   ("hazed", "murk", 0.3),
+                                   ("tended", "gentle", 0.3),
+                                   ("quick", "jolt", 0.5),
+                                   ("caustic", "caustic", 0.4)):
+            if fx[key] > thresh:
+                bits.append("%s %.1f" % (label, fx[key]))
+        if fx["lift"] > 0.6:
+            bits.append("buoyant %.1f" % fx["lift"])
+        elif fx["lift"] < -0.6:
+            bits.append("heavy %.1f" % -fx["lift"])
+        if bits:
+            text(surf, "  ".join(bits), (cx, y + 24), 19, (150, 190, 178))
+        else:
+            text(surf, "you are running nothing", (cx, y + 24), 19,
+                 (100, 110, 116))
 
     def _draw_pack(self, surf):
         w = surf.get_width()

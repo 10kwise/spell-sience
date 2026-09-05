@@ -74,6 +74,90 @@ have taught you. Making a key costs a wide intake and three or four organs,
 because the two organs that even out a mixture both destroy magnitude doing
 it, and gentleness scales with magnitude.
 
+## Chains you fire, and chains you *run*
+
+Four chains are bound to keys and thrown at the world. **Two are standing:
+no vent, always on, and what they make happens to you.** They are read off
+the same effect rules as the weapons, which is why they do exactly what
+their organs say:
+
+| standing chain | what it does to you |
+|---|---|
+| `siphon → kiln → ember gland` | you burn. it keeps the cold out — and it lights you up |
+| `siphon → settling sac → silt bloom` | you trail sediment. hidden, and grounded |
+| `siphon → harmonic` | you tend yourself. slow, real regeneration |
+| `siphon → mirror sac → salt node` | you haul yourself upward. **traversal, designed at the Bench** |
+| `siphon → ganglion → spine` | everything about you cycles faster, and hurts more |
+
+Every one costs upkeep, and every one costs a socket a weapon could have
+used. That is the whole economy: what you can *do* against what you can
+*survive*, competing for the same body.
+
+## Nothing is free
+
+You burn reserve continuously just by being awake, and more for every
+standing chain. **Ambient water covers the base rate and nothing beyond
+it** — everything else has to come out of something that was alive.
+
+So there is exactly one answer to running low, and it is hunting. `hold F`
+on a corpse and take what it was made of. The verb the whole build system
+hangs on is also the verb that keeps you breathing.
+
+And **depth multiplies all of it**. The Sill costs nearly twice what the
+Nursery does to be alive in, before you have paid for a single standing
+chain — and the Sill is the region that demands one.
+
+| | pressure | ambient | net, on a starting body |
+|---|---|---|---|
+| The Nursery | ×1.00 | 0.95/s | sustainable — you may idle here |
+| The Cisterns | ×1.30 | 0.43/s *(clogged)* | −0.72/s → about two minutes a tank |
+| The Lattice | ×1.60 | 0.95/s | −0.46/s |
+| The Sill | ×1.95 | 0.95/s | −0.77/s |
+
+## The world is trying to kill you, specifically
+
+Below the Nursery you cannot simply survive *being somewhere*. Each region
+applies a continuous pressure that exactly one standing build answers:
+
+- **The Cisterns** clog your intakes with sediment. Everything you draw is
+  halved until you run something gentle enough to keep yourself clear.
+- **The Lattice** is live water, grounding through you continuously. Only a
+  standing haze of sediment stops it.
+- **The Sill** is cold, and the only answer is to be burning — in a region
+  whose water has no heat in it at all, so you have to convert brine and
+  pay the toll.
+
+Which is what finally makes the Bench more than a gun menu. It is where you
+go when you are stuck, and being stuck is usually a question about what
+kind of animal you are rather than what you are holding.
+
+## Every attack is windup → commit → recover
+
+Nothing in this game fires instantly.
+
+A creature **winds up** visibly, and while it does it stirs the water — in a
+room you cannot see across, that pull is how something announces itself. At
+the end of the windup **its heading locks and cannot be re-aimed**, so
+moving actually works. Then it **recovers**, and recovery is a real
+vulnerability window: armour drops to a quarter, damage more than doubles,
+and landing a hit there staggers it.
+
+That single rhythm is what turns a creature from a damage sponge into
+something you play against. On top of it sit nine distinct verbs — a
+**charger** that commits to a straight line and stuns itself on rock if you
+move late, a **grappler** that latches on and drains you until you surge it
+off, a **bulwark** that is armoured everywhere except the vents it opens
+while recovering, an **ambusher** that is *genuinely undetectable while it
+holds still*, a **screamer** that tells the room about you, and an **apex**
+that goes to the loudest thing it heard and sweeps outward from there.
+
+## Moving fast is the loudest thing you can do
+
+Your wake scales with the **cube** of your speed. Cruising is quiet;
+sprinting is a signal, and the Apex is listening for it. Holding still in
+the dark makes you very nearly undetectable — which is a real option, and
+an expensive one, because the clock is running the whole time.
+
 ## Heat closes the loop
 
 An organ that works gets hot. Heat crawls to its **grid neighbours**, and
@@ -188,7 +272,8 @@ read it first.
 ## Verifying it
 
 ```
-python -m clade.verify.selftest    # 71 assertions about the *design*
+python -m clade.verify.selftest    # 97 assertions about the *design*
+python -m clade.verify.inputs      # every key on every screen
 python -m clade.verify.playtest    # four bots of increasing understanding
 python -m clade.verify.shots       # renders the game to shots/ with no display
 ```
@@ -201,18 +286,41 @@ still feeds a Recursor, that the whole route from the tank to the sill can
 still be walked. Those failures are invisible from playing for ten minutes
 and fatal over twelve hours.
 
-`playtest.py` runs four bots that differ **only in how much they understand**
-— they share navigation, aim and reflexes. It asserts the ladder holds:
-feeding gets you more parts, minding the noise keeps you quieter,
-understanding your own body opens more of the map.
+`inputs.py` exists because of a crash the rest of the suite could not have
+caught: `shots.py` drew every screen and `selftest.py` checked every rule,
+and both passed while pressing ESC at the Bench raised `AttributeError` on
+the first frame a player reached it. Everything verified the *draw* path
+and nothing verified the *input* path. So it now presses every key and
+every mouse button on every screen, twice — 561 combinations — and asserts
+nothing raises.
+
+`playtest.py` runs four bots that differ **only in how much they
+understand** — they share navigation, aim and reflexes:
+
+| bot | knows |
+|---|---|
+| `flail` | nothing. fires at what is nearest, never feeds, never shuts up |
+| `feeder` | that the reserve is not ammunition, it is the clock |
+| `quiet` | that loudness is a resource, and that slowing down spends less of it than holding fire does |
+| `plumber` | how to order its own organs, **and how to build the standing chain the region it is in demands** |
 
 ```
-bot        rooms  deep  deaths  organs  frags  kills  harv   noise
-flail        6.0   1.0     1.0     4.0    4.0   14.0   0.0    42.8
-feeder       6.0   1.0     1.0    21.0    4.0   12.2  11.0    39.8
-quiet        6.0   1.0     0.2    24.0    4.0   13.2  12.5    39.1
-plumber      6.0   1.0     1.0    23.2    4.0   14.2  13.2    40.3
+bot        rooms  regions  deep  deaths  organs  frags  kills  harv   noise
+flail       10.2      2.0   3.2     2.4     6.0    5.0    2.0   0.0     1.1
+feeder      10.2      2.0   3.2     2.2    26.4    5.0   17.0  16.8    16.2
+quiet       10.6      2.0   3.6     0.0    22.6    5.0   11.2  11.2     4.1
+plumber     10.0      2.0   3.0     0.4    30.6    5.0   16.8  16.2    28.1
 ```
+
+Knowing that the reserve is a clock is worth four times the parts. Knowing
+that loudness is a resource is worth **zero deaths at a quarter the
+noise**. And the bot that never opens the Bench ends a five-minute run with
+exactly the body it started with.
+
+Only the robust claims are assertions; the rest is printed. A bot playing a
+stealth game with a fixed policy is high-variance by nature, and a flaky
+assertion is worse than none — it trains whoever runs this to ignore the
+output.
 
 ---
 

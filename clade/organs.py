@@ -55,7 +55,7 @@ class ChainContext:
     __slots__ = (
         "body", "world", "pos", "aim", "count", "spread", "speed",
         "recursions", "aborted", "extra_heat", "viability_cost",
-        "quiet", "trail", "delay", "log", "heat_scale",
+        "quiet", "trail", "delay", "log", "heat_scale", "dry",
     )
 
     def __init__(self, body=None, world=None, pos=None, aim=None):
@@ -71,6 +71,10 @@ class ChainContext:
         self.extra_heat = 0.0
         self.viability_cost = 0.0
         self.heat_scale = 1.0
+        # A standing chain is measured every half second to find out what
+        # it is doing to you. Measuring it must not also drain the tank —
+        # the draining is the upkeep, charged once, in body.update().
+        self.dry = False
         self.quiet = 1.0        # multiplier on how loud the emission is
         self.trail = False
         self.delay = 0.0
@@ -212,6 +216,8 @@ class Organ:
 
 def _draw_reserve(ctx, amount, purify=False, floor_only=False):
     body = ctx.body
+    if body is not None and ctx.dry:
+        return body.peek_reserve(amount, purify=purify, floor_only=floor_only)
     if body is None:
         # Assay bench: no body, so hand back a neutral sample so the player
         # can still study the *transforms* in isolation. This is the only

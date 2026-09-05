@@ -477,6 +477,11 @@ class DarkRenderer:
             pygame.draw.circle(surf, (255, 210, 210), p, max(1, r // 2))
 
     def _creature(self, surf, c, player, world, off, sight):
+        if c.hidden:
+            # Motionless ambusher. Not drawn at all — the only trace is the
+            # silt it is sitting in, and the shape of what the silt is
+            # doing around something you cannot see.
+            return
         p = (int(c.pos[0] - off[0]), int(c.pos[1] - off[1]))
         if p[0] < -80 or p[0] > self.w + 80 or p[1] < -80 or p[1] > self.h + 80:
             return
@@ -486,8 +491,14 @@ class DarkRenderer:
         r = int(c.sp.radius)
 
         if d > lit:
-            # Outside your light. You do not see it — you see the water not
-            # behaving. Drawn darker than the ground so it reads as a hole.
+            # Something committing to an attack out in the dark still gets
+            # a tell. You cannot see what it is; you can see that the water
+            # has gone wrong in one particular place.
+            if c.phase is not None and d < lit * 2.6:
+                self._attack_tell(surf, c, p, r)
+                return
+            # Otherwise: you do not see it, you see the water not behaving.
+            # Drawn darker than the ground so it reads as a hole.
             if d < lit * 1.75:
                 k = 1.0 - (d - lit) / max(1.0, lit * 0.75)
                 s = pygame.Surface((r * 4, r * 4), pygame.SRCALPHA)
@@ -514,9 +525,11 @@ class DarkRenderer:
         tip = (p[0] + int(f[0] * (r + 8)), p[1] + int(f[1] * (r + 8)))
         pygame.draw.line(surf, _tint(base, k * 0.8), p, tip, 2)
 
+        self._attack_tell(surf, c, p, r)
+
         from ..creatures import ALERT, HUNT, STRIKE
-        if c.state == STRIKE:
-            pygame.draw.circle(surf, (255, 190, 170), p, r + 9, 2)
+        if c.phase is not None:
+            pass
         elif c.state == HUNT:
             pygame.draw.circle(surf, (220, 140, 130), p, r + 7, 1)
         elif c.state == ALERT or c.alarm > 0.3:
@@ -536,6 +549,41 @@ class DarkRenderer:
                             pygame.Rect(p[0] - r - 5, p[1] - r - 5,
                                         (r + 5) * 2, (r + 5) * 2),
                             -math.pi / 2, -math.pi / 2 + frac * math.tau, 2)
+
+    def _attack_tell(self, surf, c, p, r):
+        """Windup, commit and recovery, drawn so a player can act on them.
+
+        A telegraph nobody can see is not a telegraph. Windup is a ring
+        that *closes* — the moment it touches the body is the moment the
+        heading locks — commit draws the locked line it is about to travel,
+        and recovery is an open white arc that means hit me now.
+
+        The three read differently at a glance and in peripheral vision,
+        which is the whole requirement: in a room this dark you are
+        watching shapes, not reading state."""
+        from ..creatures import COMMIT, RECOVER, WINDUP
+        if c.phase is None:
+            return
+        if c.phase == WINDUP:
+            t = c.phase_frac
+            ring = int(r + 34 - 30 * t)
+            col = (int(200 + 55 * t), int(120 - 60 * t), int(90 - 60 * t))
+            pygame.draw.circle(surf, col, p, max(r + 2, ring), 2)
+            if t > 0.55:
+                pygame.draw.circle(surf, (255, 210, 190), p, r + 2, 1)
+        elif c.phase == COMMIT:
+            d = c.locked_aim
+            pygame.draw.line(surf, (255, 200, 170), p,
+                             (p[0] + int(d[0] * 90), p[1] + int(d[1] * 90)), 3)
+            pygame.draw.circle(surf, (255, 235, 220), p, r + 4, 2)
+        elif c.phase == RECOVER:
+            t = c.phase_frac
+            arc = pygame.Rect(p[0] - r - 10, p[1] - r - 10,
+                              (r + 10) * 2, (r + 10) * 2)
+            pygame.draw.arc(surf, (235, 245, 255), arc,
+                            0.5 + t * 2.0, 2.6 + t * 2.0, 3)
+            pygame.draw.arc(surf, (235, 245, 255), arc,
+                            3.6 + t * 2.0, 5.7 + t * 2.0, 3)
 
     def _player(self, surf, player, world, off):
         p = (int(player.pos[0] - off[0]), int(player.pos[1] - off[1]))

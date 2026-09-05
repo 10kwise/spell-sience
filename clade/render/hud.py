@@ -55,7 +55,9 @@ def draw_hud(surf, world, player, notices=None):
     _threat_edge(surf, world.threat_level(), world)
     _viability(surf, b, (78, h - 78))
     _reserve(surf, b, (128, h - 128))
+    _standing(surf, b, (128, h - 172))
     _chains(surf, b, (w - 26, h - 30))
+    _hazard(surf, world, (w // 2, h - 96))
     _events(surf, world, (w // 2, 74))
     if notices:
         _notices(surf, notices, (w // 2, h - 168))
@@ -110,6 +112,69 @@ def _reserve(surf, body, topleft):
     mx = x + 2 + int((total_w - 4) * C.NEUTRAL_BRINE)
     pygame.draw.line(surf, (200, 210, 220), (mx, y + 2), (mx, y + hgt),  1)
     text(surf, "%d" % int(res.magnitude), (x - 30, y + hgt), 18, (130, 140, 150))
+
+    # What it is costing you to be the thing you currently are. Ambient
+    # uptake covers the base rate and nothing more, so any number here
+    # above about 0.5 is a promise that you will be hunting shortly.
+    up = body.upkeep
+    col = (150, 160, 170) if up < 1.0 else (
+        (210, 170, 110) if up < 1.6 else (232, 130, 110))
+    text(surf, "-%.1f/s" % up, (x - 40, y + hgt * 2 + 2), 17, col)
+
+
+def _standing(surf, body, topleft):
+    """The two chains that are always running.
+
+    Drawn above the reserve bars rather than beside the firing slots on
+    purpose: what you are *running* belongs with what you are made of, not
+    with what you are shooting."""
+    x, y = topleft
+    fx = body.standing_fx
+    for i, ch in enumerate(body.standing):
+        rect = pygame.Rect(x + i * 62, y, 56, 30)
+        ok, _ = body.validate(ch, standing=True)
+        organs = body.chain_organs(ch) if ok else None
+        pygame.draw.rect(surf, (22, 26, 30), rect, border_radius=3)
+        pygame.draw.rect(surf, (120, 150, 140) if ok else (46, 44, 44), rect,
+                         1, border_radius=3)
+        text(surf, str(5 + i), (rect.x + 4, rect.y + 2), 14,
+             (110, 130, 125) if ok else (66, 68, 72))
+        if organs:
+            text(surf, "".join(o.glyph for o in organs),
+                 (rect.centerx + 4, rect.centery + 1), 18, (170, 205, 195),
+                 center=True)
+
+    marks = []
+    if fx["heat"] > 0.3:
+        marks.append(("burning", (226, 148, 90)))
+    elif fx["heat"] < -0.3:
+        marks.append(("cold", (130, 180, 220)))
+    if fx["murk"] > 0.3:
+        marks.append(("hazed", (168, 152, 120)))
+    if fx["gentle"] > 0.3:
+        marks.append(("tended", (150, 205, 175)))
+    if fx["lift"] > 0.6:
+        marks.append(("buoyant", (150, 190, 215)))
+    elif fx["lift"] < -0.6:
+        marks.append(("heavy", (140, 150, 165)))
+    if fx["jolt"] > 0.5:
+        marks.append(("quick", (196, 158, 236)))
+    mx = x + 2 * 62 + 8
+    for i, (word, col) in enumerate(marks[:3]):
+        text(surf, word, (mx, y + i * 11), 15, col)
+
+
+def _hazard(surf, world, center):
+    """The region, working on you. Named, so the answer is findable."""
+    bite = getattr(world, "hazard_bite", 0.0)
+    if bite < 0.12:
+        return
+    from .. import config as C
+    hz = C.HAZARD.get(world.atlas.rooms[world.room_key]["region"], {})
+    if not hz:
+        return
+    a = int(90 + 150 * bite)
+    text(surf, hz["note"], center, 21, (216, 150, 120), center=True, alpha=a)
 
 
 def _chains(surf, body, bottomright):

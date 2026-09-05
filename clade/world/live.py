@@ -151,6 +151,8 @@ class World:
         # bot did this ten thousand times in a row; a player would have
         # done it once and stopped playing.
         self.transition_lock = 0.0
+        self.hazard_bite = 0.0
+        self._hazard_warn = 0.0
         self.room_key = start_key or atlas.start
         self.discovered = {self.room_key}
         self.room = self.get_room(self.room_key)
@@ -333,7 +335,7 @@ class World:
         # dividend for the trouble. Tuned so that clearing a room refills
         # you but does not fill you: you always leave a room slightly
         # hungrier than you would like.
-        comp.scale_in_place(1.35)
+        comp.scale_in_place(C.CORPSE_YIELD)
         drops = list(sp.drops)
         self.corpses.append(Corpse(creature.pos, comp, drops, sp.key))
         self.add_disturbance(6.0, creature.pos)
@@ -380,10 +382,52 @@ class World:
 
     # ------------------------------------------------------------- update
 
+    def apply_hazard(self, player, dt):
+        """The region, working on you.
+
+        Below the Nursery you cannot simply survive being somewhere. Each
+        region applies a continuous pressure that exactly one *standing*
+        chain answers, so the question "what should I build" stops being
+        "what kills fastest" and starts being "what can I live in".
+
+        The deficit is proportional, not a switch: half the warmth you need
+        takes half the cold, so a partial answer is a partial answer and
+        the player can feel themselves getting closer."""
+        region = self.atlas.rooms[self.room_key]["region"]
+        hz = C.HAZARD.get(region, {})
+        body = player.body
+        body.pressure = C.PRESSURE.get(region, 1.0)
+        body.clog = 0.0
+        if not hz:
+            self.hazard_bite = 0.0
+            return
+
+        fx = body.standing_fx
+        have = fx.get(hz["answer"], 0.0)
+        need = hz["need"]
+        deficit = max(0.0, min(1.0, 1.0 - have / max(1e-6, need)))
+        self.hazard_bite = deficit
+
+        if deficit > 0.02:
+            if "chill" in hz:
+                player.take_damage(hz["chill"] * deficit * dt, self)
+                player.vel[0] *= (1.0 - (1.0 - hz["slow"]) * deficit * dt * 4)
+                player.vel[1] *= (1.0 - (1.0 - hz["slow"]) * deficit * dt * 4)
+            if "shock" in hz:
+                player.take_damage(hz["shock"] * deficit * dt, self)
+            if "clog" in hz:
+                body.clog = hz["clog"] * deficit
+
+            self._hazard_warn -= dt
+            if self._hazard_warn <= 0.0 and deficit > 0.35:
+                self._hazard_warn = 14.0
+                self.flash_event(hz["note"])
+
     def update(self, dt, player):
         self.player = player
         self.time += dt
         self.room.update(dt)
+        self.apply_hazard(player, dt)
 
         self.transition_lock = max(0.0, self.transition_lock - dt)
         self.disturbance = max(0.0, self.disturbance - C.DISTURB_DECAY * dt)

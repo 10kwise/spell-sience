@@ -71,7 +71,7 @@ ATTENDANT = _s(
 
 FRY = _s(
     "fry", "Gullet-fry", viability=9.0, radius=7.0, speed=104.0,
-    organs=["gullet"], chain=[], behaviour="swarm",
+    organs=["gullet"], chain=[], behaviour="swarm", pack=0.6,
     resist=[0.0, 0.0, 0.0, 0.2], senses=1.1, tier=0, glow=0.04,
     aggression=1.6,
     codex="too small to be a problem and there are never few of them. they "
@@ -81,7 +81,8 @@ FRY = _s(
 
 SOUNDER = _s(
     "sounder", "Sounder", viability=26.0, radius=16.0, speed=14.0,
-    organs=["siphon", "swell", "pore_field"], chain=[], behaviour="sounder",
+    organs=["siphon", "swell", "pore_field"], chain=[], behaviour="sounder", attack="scream", windup=1.1,
+    commit_time=0.1, recover=2.2, reach=520.0,
     resist=[0.0, 0.0, 0.0, 0.0], senses=2.1, tier=0, glow=0.22,
     codex="anchored, blind, and listening. it has no way to hurt you at all. "
           "it does not need one.",
@@ -91,7 +92,8 @@ SOUNDER = _s(
 NURSE = _s(
     "nurse", "Nursemaid", viability=52.0, radius=19.0, speed=62.0,
     organs=["siphon", "kiln", "salt_node", "spiracle"], chain=[0, 1, 2, 3],
-    behaviour="stalk", resist=[0.25, 0.0, 0.0, 0.0], senses=1.0, tier=0,
+    behaviour="stalk", attack="shoot", windup=0.60, commit_time=0.15,
+    recover=1.05, reach=310.0, pack=0.4, resist=[0.25, 0.0, 0.0, 0.0], senses=1.0, tier=0,
     glow=0.18,
     codex="it was built to move the stock between chambers and it is still "
           "doing that. you are stock. the chamber it wants you in is not one "
@@ -102,7 +104,8 @@ NURSE = _s(
 
 LAMPREY = _s(
     "lamprey", "Lamprey", viability=30.0, radius=10.0, speed=132.0,
-    organs=["leech", "spine", "spiracle"], chain=[0, 1, 2], behaviour="stalk",
+    organs=["leech", "spine", "spiracle"], chain=[0, 1, 2], behaviour="grappler", attack="grab", windup=0.42, commit_time=0.60,
+    recover=1.25, reach=270.0, pack=0.5,
     resist=[0.25, 0.0, 0.45, 0.35], senses=1.3, tier=1, glow=0.05,
     aggression=1.7,
     codex="it does not hunt you so much as commute through you.",
@@ -111,7 +114,8 @@ LAMPREY = _s(
 OSSUARY = _s(
     "ossuary", "Ossuary", viability=140.0, radius=26.0, speed=38.0,
     organs=["gullet", "kiln", "ember_gland", "maw"], chain=[0, 1, 2, 3],
-    behaviour="ossuary", resist=[0.55, 0.10, 0.50, 0.0], armour=0.55,
+    behaviour="bulwark", attack="cone", windup=1.10, commit_time=0.30,
+    recover=1.90, reach=200.0, resist=[0.55, 0.10, 0.50, 0.0], armour=0.55,
     senses=0.8, tier=1, glow=0.34,
     codex="plated all the way round, except where it has to let the heat "
           "out. everything down here that lasted this long solved the same "
@@ -123,7 +127,8 @@ OSSUARY = _s(
 CARRION = _s(
     "carrion", "Carrion Drift", viability=44.0, radius=17.0, speed=76.0,
     organs=["gullet", "settling_sac", "bloom", "caster"], chain=[0, 1, 2, 3],
-    behaviour="carrion", resist=[0.35, 0.0, 0.60, 0.0], senses=1.6, tier=1,
+    behaviour="carrion", attack="lob", windup=0.75, commit_time=0.20,
+    recover=1.15, reach=430.0, resist=[0.35, 0.0, 0.60, 0.0], senses=1.6, tier=1,
     glow=0.02,
     codex="it arrives after. it has always arrived after. it is the reason "
           "you have started eating faster.",
@@ -132,7 +137,8 @@ CARRION = _s(
 SILT_MOTHER = _s(
     "silt_mother", "Silt Mother", viability=115.0, radius=24.0, speed=70.0,
     organs=["root", "bloom", "settling_sac", "fork", "caster"],
-    chain=[0, 1, 2, 3, 4], behaviour="ambush",
+    chain=[0, 1, 2, 3, 4], behaviour="ambush", attack="erupt", windup=0.48, commit_time=0.25,
+    recover=1.45, reach=240.0,
     resist=[0.40, 0.0, 0.75, 0.0], senses=1.9, tier=1, glow=0.0,
     codex="you have never seen it. you have seen the place where the water "
           "stops telling you anything, and you have watched that place "
@@ -144,7 +150,8 @@ SILT_MOTHER = _s(
 RECURSOR = _s(
     "recursor", "Recursor", viability=95.0, radius=21.0, speed=88.0,
     organs=["siphon", "knot", "ganglion", "spine", "spiracle"],
-    chain=[0, 2, 3, 4], behaviour="recursor",
+    chain=[0, 2, 3, 4], behaviour="recursor", attack="shoot", windup=0.50, commit_time=0.20,
+    recover=0.95, reach=370.0,
     resist=[0.25, 0.05, 0.20, 0.50], senses=1.2, tier=2, glow=0.55,
     aggression=1.4,
     codex="hit it harder and it gets brighter. you have tested this more "
@@ -157,7 +164,8 @@ RECURSOR = _s(
 CIRCUIT = _s(
     "circuit", "Circuit", viability=72.0, radius=14.0, speed=175.0,
     organs=["filter_gill", "ganglion", "spine", "fork", "spiracle"],
-    chain=[0, 1, 2, 3, 4], behaviour="stalk",
+    chain=[0, 1, 2, 3, 4], behaviour="charger", attack="charge", windup=0.55, commit_time=0.55,
+    recover=1.35, reach=430.0, pack=0.5,
     resist=[0.10, 0.05, 0.10, 0.70], senses=1.5, tier=2, glow=0.42,
     aggression=1.9,
     codex="it runs the corridors on a schedule. it has been running them on "
@@ -167,7 +175,8 @@ CIRCUIT = _s(
 HOLLOW = _s(
     "hollow", "Hollow", viability=185.0, radius=28.0, speed=46.0,
     organs=["mouth", "condenser", "salt_node", "swell", "maw"],
-    chain=[0, 1, 2, 3, 4], behaviour="stalk",
+    chain=[0, 1, 2, 3, 4], behaviour="bulwark", attack="cone", windup=1.00, commit_time=0.30,
+    recover=1.65, reach=220.0,
     resist=[0.60, 0.0, 0.20, 0.45], armour=0.35, senses=1.0, tier=2,
     glow=0.08,
     codex="it is a candidate that got everything right except one thing, and "
@@ -180,7 +189,8 @@ HOLLOW = _s(
 FIRST = _s(
     "first", "First Candidate", viability=520.0, radius=40.0, speed=96.0,
     organs=["mouth", "harmonic", "knot", "ember_gland", "fork", "maw"],
-    chain=[0, 2, 3, 4, 5], behaviour="apex",
+    chain=[0, 2, 3, 4, 5], behaviour="apex", attack="sweep", windup=0.90, commit_time=0.30,
+    recover=1.45, reach=340.0,
     # Armoured against the cold weight it has been sitting in for ten
     # thousand years. Heat is the gap, and the Sill has no heat in it.
     resist=[0.60, 0.05, 0.35, 0.35], armour=0.40, senses=1.8, tier=3,
@@ -195,7 +205,8 @@ FIRST = _s(
 MIDWIFE = _s(
     "midwife", "The Midwife", viability=380.0, radius=38.0, speed=118.0,
     organs=["mouth", "kiln", "salt_node", "swell", "maw"],
-    chain=[0, 1, 2, 3, 4], behaviour="apex",
+    chain=[0, 1, 2, 3, 4], behaviour="apex", attack="charge", windup=0.70, commit_time=0.70,
+    recover=1.70, reach=430.0,
     resist=[0.35, 0.15, 0.15, 0.15], armour=0.30, senses=2.2, tier=1,
     glow=0.28,
     codex="it does not eat you. it takes you somewhere. the difference has "
@@ -205,7 +216,8 @@ MIDWIFE = _s(
 LONG_QUIET = _s(
     "long_quiet", "The Long Quiet", viability=460.0, radius=52.0, speed=104.0,
     organs=["mouth", "settling_sac", "bloom", "swell", "fork", "caster"],
-    chain=[0, 1, 2, 3, 4, 5], behaviour="apex",
+    chain=[0, 1, 2, 3, 4, 5], behaviour="apex", attack="lob", windup=1.00, commit_time=0.30,
+    recover=1.55, reach=540.0,
     resist=[0.20, 0.20, 0.65, 0.20], armour=0.35, senses=2.0, tier=2,
     glow=0.0,
     codex="you have seen a flank of it, once, at the edge of your light, "
@@ -215,7 +227,8 @@ LONG_QUIET = _s(
 THE_CIRCUIT = _s(
     "the_circuit", "Breaker", viability=420.0, radius=34.0, speed=190.0,
     organs=["filter_gill", "ganglion", "spine", "knot", "fork", "spiracle"],
-    chain=[0, 1, 2, 4, 5], behaviour="apex",
+    chain=[0, 1, 2, 4, 5], behaviour="apex", attack="charge", windup=0.50, commit_time=0.60,
+    recover=1.25, reach=470.0,
     resist=[0.15, 0.15, 0.15, 0.70], armour=0.25, senses=2.4, tier=2,
     glow=0.66,
     codex="whatever it was for, the building still has power for it, and it "
