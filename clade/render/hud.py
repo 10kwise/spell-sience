@@ -35,13 +35,15 @@ def font(size, bold=False):
 
 
 def text(surf, s, pos, size=18, color=(190, 200, 210), bold=False,
-         center=False, alpha=255):
+         center=False, alpha=255, right=False):
     img = font(size, bold).render(str(s), True, color)
     if alpha < 255:
         img.set_alpha(alpha)
     r = img.get_rect()
     if center:
         r.center = pos
+    elif right:
+        r.topright = pos
     else:
         r.topleft = pos
     surf.blit(img, r)

@@ -32,7 +32,9 @@ KEYS = [
     pygame.K_RIGHT, pygame.K_w, pygame.K_a, pygame.K_s, pygame.K_d,
     pygame.K_q, pygame.K_e, pygame.K_f, pygame.K_c, pygame.K_m,
     pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5,
-    pygame.K_LSHIFT, pygame.K_z, pygame.K_x, pygame.K_0, pygame.K_9,
+    pygame.K_6, pygame.K_7, pygame.K_l, pygame.K_r, pygame.K_x,
+    pygame.K_F1, pygame.K_SLASH, pygame.K_LSHIFT, pygame.K_z,
+    pygame.K_0, pygame.K_9,
 ]
 
 STATES = [
@@ -104,25 +106,72 @@ def main():
                     problems.append("%s + button %d at %s -> %s: %s" % (
                         name, button, pos, type(exc).__name__, exc))
 
-    # And a longer scripted session at the Bench: route a chain, break it,
-    # assay it, walk out. The exact sequence that crashed.
+    # And longer scripted sessions at the Bench, including the exact
+    # sequence a player reported as broken: remove something, switch slot,
+    # then try to do anything at all.
+    sessions = {
+        "route/assay/leave": [
+            pygame.K_1, pygame.K_BACKSPACE, pygame.K_1, pygame.K_SPACE,
+            pygame.K_TAB, pygame.K_2, pygame.K_RETURN, pygame.K_ESCAPE,
+            pygame.K_TAB, pygame.K_ESCAPE,
+        ],
+        "standing slots": [
+            pygame.K_5, pygame.K_x, pygame.K_r, pygame.K_RETURN,
+            pygame.K_6, pygame.K_BACKSPACE, pygame.K_ESCAPE, pygame.K_SPACE,
+        ],
+        "shelf": [
+            pygame.K_l, pygame.K_DOWN, pygame.K_DOWN, pygame.K_RETURN,
+            pygame.K_l, pygame.K_UP, pygame.K_ESCAPE, pygame.K_SPACE,
+        ],
+        "auto-route every slot": [
+            pygame.K_1, pygame.K_r, pygame.K_RETURN,
+            pygame.K_2, pygame.K_r, pygame.K_RETURN,
+            pygame.K_5, pygame.K_r, pygame.K_RETURN,
+            pygame.K_6, pygame.K_r, pygame.K_RETURN, pygame.K_SPACE,
+        ],
+        "tutorial toggling": [
+            pygame.K_F1, pygame.K_F1, pygame.K_SLASH, pygame.K_SPACE,
+        ],
+    }
+    for label, script in sessions.items():
+        game = _fresh(BENCH)
+        try:
+            for key in script:
+                game.handle(pygame.event.Event(pygame.KEYDOWN, key=key,
+                                               unicode="", mod=0))
+                game._dt = 1 / 60.0
+                game.update(1 / 60.0)
+                game.draw()
+            checked += 1
+        except Exception as exc:
+            problems.append("bench session %r -> %s: %s"
+                            % (label, type(exc).__name__, exc))
+
+    # The reported bug, as a mixed key/mouse script: remove an organ, arm a
+    # different slot, then check that selecting and removing still work.
     game = _fresh(BENCH)
-    script = [
-        (pygame.K_1, None), (pygame.K_BACKSPACE, None), (pygame.K_1, None),
-        (pygame.K_SPACE, None), (pygame.K_TAB, None), (pygame.K_2, None),
-        (pygame.K_RETURN, None), (pygame.K_ESCAPE, None),
-        (pygame.K_TAB, None), (pygame.K_ESCAPE, None),
-    ]
     try:
-        for key, _ in script:
-            game.handle(pygame.event.Event(pygame.KEYDOWN, key=key,
-                                           unicode="", mod=0))
-            game._dt = 1 / 60.0
-            game.update(1 / 60.0)
-            game.draw()
+        socket = (2, 1)
+        rect = game.bench.cell_rect(*socket)
+        game.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                                       pos=rect.center, button=3))
+        game.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_2,
+                                       unicode="", mod=0))
+        for cell in ((1, 1), (1, 2), (2, 2)):
+            r = game.bench.cell_rect(*cell)
+            game.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                                           pos=r.center, button=1))
+            game.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                                           pos=r.center, button=3))
+        game.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN,
+                                       unicode="", mod=0))
+        game._dt = 1 / 60.0
+        game.update(1 / 60.0)
+        game.draw()
         checked += 1
     except Exception as exc:
-        problems.append("bench session -> %s: %s" % (type(exc).__name__, exc))
+        problems.append("reported bench sequence -> %s: %s"
+                        % (type(exc).__name__, exc))
 
     print("CLADE — input sweep")
     print("%d state/input combinations exercised" % checked)

@@ -43,7 +43,8 @@ FIRE_KEYS = {pygame.K_q: 2, pygame.K_e: 3}
 
 
 class Game:
-    def __init__(self, screen, seed=0, headless=False):
+    def __init__(self, screen, seed=0, headless=False, sandbox=False):
+        self.sandbox = sandbox
         self.screen = screen
         self.headless = headless
         self.state = TITLE
@@ -76,6 +77,9 @@ class Game:
             self.checkpoint = data.get("checkpoint", ATLAS.start)
             self.playtime = data.get("stats", {}).get("time", 0.0)
 
+        if self.sandbox:
+            self._grant_everything()
+
         start = (data or {}).get("room", ATLAS.start)
         self.world = World(ATLAS, self.body, start, seed=self.seed)
         spawn = self._spawn_point()
@@ -95,6 +99,21 @@ class Game:
             # Re-enter so doors already forced open stay open.
             self.world.enter_room(start, first=True)
             self.player.pos = list(self._spawn_point())
+
+    def _grant_everything(self):
+        """python play.py --sandbox
+
+        One of every organ, every socket open. Purely a testing affordance
+        — it hands you the whole vocabulary so the Bench and the Shelf can
+        be exercised without first playing four hours to find the parts."""
+        from .body import GRID_H, GRID_W
+        from .organs import ALL
+        for cy in range(GRID_H):
+            for cx in range(GRID_W):
+                self.body.unlock((cx, cy))
+        for t in ALL:
+            self.body.pack.append(make(t.key))
+            self.codex.see_organ(t.key)
 
     def _spawn_point(self):
         room = self.world.room
@@ -833,11 +852,17 @@ def _number(game):
 ENDINGS = {"harvest": _ending_harvest, "abstain": _ending_abstain}
 
 
-def main():
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    sandbox = "--sandbox" in argv
     pygame.init()
-    pygame.display.set_caption("CLADE")
+    pygame.display.set_caption("CLADE" + ("  [sandbox]" if sandbox else ""))
     screen = pygame.display.set_mode((C.SCREEN_W, C.SCREEN_H))
-    Game(screen).run()
+    game = Game(screen, sandbox=sandbox)
+    if sandbox:
+        game.state = PLAY
+        game.notice("sandbox: every organ, every socket. press TAB.")
+    game.run()
     pygame.quit()
 
 

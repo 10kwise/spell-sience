@@ -162,8 +162,35 @@ def main():
     game.bench.assay_chain = 0
     game.bench._run_assay()
     game.bench.sel_cell = (2, 1)
+    game.bench.show_tutorial = False
     _save(game, "09_the_bench")
 
+    # The tutorial, on its first step.
+    game.bench.show_tutorial = True
+    game.bench.tutorial.step = 3
+    game.bench.sel_cell = None
+    _save(game, "09b_tutorial")
+
+    # Mid-edit: the state that used to break every other control.
+    game.bench.show_tutorial = False
+    game.bench._arm(1, False)
+    game.bench.route = [(1, 1), (1, 2), (2, 2)]
+    game.bench.sel_cell = (1, 2)
+    game.bench._run_assay()
+    _save(game, "09c_editing")
+
+    # The shelf, on a sandbox body — otherwise almost every entry reads
+    # "missing", which is correct in play and useless as a picture of what
+    # the screen is for.
+    shelf_game = Game(screen, seed=4, headless=True, sandbox=True)
+    shelf_game.state = BENCH
+    shelf_game.bench.show_tutorial = False
+    shelf_game.bench._load_preset(__import__(
+        "clade.shelf", fromlist=["x"]).BY_KEY["lance"])
+    shelf_game.bench.shelf_open = True
+    shelf_game.bench.shelf_index = 2
+    _save(shelf_game, "09d_the_shelf")
+    game.bench.shelf_open = False
     game.bench.sel_cell = None
     game.bench._run_assay()
     _save(game, "10_the_assay")

@@ -1049,6 +1049,174 @@ def t_a_motionless_ambusher_is_invisible():
     check("...and can be, the moment it moves", not c.hidden)
 
 
+# ===========================================================================
+# The Bench. Reported as the worst screen in the game: right-click stopped
+# removing after you touched a slot, connections worked "sometimes", and
+# nothing said what anything did. These are the guards against all of it
+# coming back.
+# ===========================================================================
+
+def _bench():
+    from ..app import BENCH, Game
+    screen = pygame.display.set_mode((C.SCREEN_W, C.SCREEN_H))
+    game = Game(screen, headless=True, sandbox=True)
+    game.state = BENCH
+    return game, game.bench
+
+
+def t_right_click_always_removes():
+    """The bug that made the Bench feel broken: `_click` dispatched to the
+    router before anything else, so arming a slot silently disabled both
+    selecting and removing. Every one of these must work *while editing*."""
+    game, b = _bench()
+    b._arm(1, False)                       # arm a slot: the old poison pill
+    cell = next(c for c, o in game.body.cells.items() if o is not None)
+
+    b._click_cell(cell, 3)
+    check("right-click removes an organ while a chain is being edited",
+          game.body.organ_at(cell) is None)
+
+    other = next(c for c, o in game.body.cells.items() if o is not None)
+    b._click_cell(other, 1)
+    check("left-click still selects while a chain is being edited",
+          b.sel_cell == other)
+
+    check("...and editing is still live afterwards", b.editing == 1)
+
+
+def t_route_clicks_are_forgiving():
+    """Clicking a socket already in the path used to be an error. Now it
+    steps back to it, which is what every player expects and what makes a
+    misclick cost nothing."""
+    game, b = _bench()
+    body = game.body
+    run = [(0, 0), (1, 0), (2, 0), (3, 0)]
+    for cell, key in zip(run, ["siphon", "kiln", "salt_node", "spiracle"]):
+        if body.organ_at(cell) is not None:
+            body.uninstall(cell)
+        body.install(cell, make(key))
+    b._arm(0, False)
+    b.route = []
+    for cell in run:
+        b._extend(cell)
+    check("clicking sockets in order builds the path", b.route == run,
+          str(b.route))
+
+    b._extend(run[1])
+    check("clicking a socket already in the path steps back to it",
+          b.route == run[:2], str(b.route))
+
+    b._extend((5, 4))
+    check("a socket that does not touch the last one is refused, not "
+          "silently accepted", b.route == run[:2], str(b.route))
+
+
+def t_auto_route_produces_legal_chains():
+    game, b = _bench()
+    body = game.body
+    for slot, standing in ((0, False), (1, False), (0, True)):
+        b._arm(slot, standing)
+        b.route = []
+        b._auto_route()
+        ok, why = body.validate(Chain(b.route), standing=standing)
+        check("auto-route builds a legal %s chain"
+              % ("standing" if standing else "fired"), ok,
+              why + " " + str(b.route))
+
+
+def t_every_shelf_preset_loads():
+    """Sixteen prebuilt chains, and every one of them must actually fit
+    into a body and validate. A shelf entry that does not load is worse
+    than no shelf."""
+    from ..shelf import SHELF, STANDING
+    bad = []
+    for preset in SHELF:
+        game, b = _bench()
+        b._load_preset(preset)
+        standing = preset.kind == STANDING
+        pool = game.body.standing if standing else game.body.chains
+        fitted = any(
+            game.body.validate(ch, standing=standing)[0]
+            and [o.key for o in game.body.chain_organs(ch)] == preset.organs
+            for ch in pool)
+        if not fitted:
+            bad.append("%s (%s)" % (preset.key, b.message))
+    check("every one of the %d shelf presets loads and routes" % len(SHELF),
+          not bad, "; ".join(bad[:3]))
+
+
+def t_the_shelf_teaches_the_order_lesson():
+    """LANCE and FIZZLE are the same five organs in a different order, and
+    the shelf exists partly so a player can load both and see it."""
+    from ..shelf import BY_KEY as PRESETS
+    lance, fizzle = PRESETS["lance"], PRESETS["fizzle"]
+    check("Lance and Fizzle are built from exactly the same organs",
+          sorted(lance.organs) == sorted(fizzle.organs))
+    check("...in a different order", lance.organs != fizzle.organs)
+    a, _ = run_chain(lance.organs, Charge(24, 5, 6, 4))
+    b2, _ = run_chain(fizzle.organs, Charge(24, 5, 6, 4))
+    ratio = total(a, "damage") / max(0.01, total(b2, "damage"))
+    check("and the good order hits far harder", ratio > 2.2,
+          "%.2fx (%.1f vs %.1f)" % (ratio, total(a, "damage"),
+                                    total(b2, "damage")))
+
+
+def t_every_organ_says_what_it_does():
+    """'I cannot tell what things do' was the fairest complaint made about
+    this game. Every organ now carries a measured line, derived by running
+    it, and none of them may be empty or a placeholder."""
+    from ..assay import bias_of, function_of
+    from ..organs import ALL
+    vague = []
+    for t in ALL:
+        line = function_of(t)
+        tag = bias_of(t)
+        if not line or len(line) < 12:
+            vague.append("%s: %r" % (t.name, line))
+        elif "changes nothing measurable" in line:
+            vague.append("%s: unmeasurable" % t.name)
+        elif "%s" in line or "%.1f" in line:
+            vague.append("%s: unformatted %r" % (t.name, line))
+        if not tag or tag == "shapes":
+            vague.append("%s: no useful tag (%r)" % (t.name, tag))
+    check("all %d organs describe themselves, measurably" % len(ALL),
+          not vague, "; ".join(vague[:4]))
+
+
+def t_the_tutorial_can_be_completed():
+    """Every step must be reachable by doing the thing it asks for."""
+    from ..screens.bench import Tutorial
+    game, b = _bench()
+    check("the tutorial has steps", len(Tutorial.STEPS) >= 6)
+    b.tut_key = True
+    b.tut_removed = True
+    b.tut_installed = True
+    b._arm(0, False)
+    b.tut_committed = True
+    b.tut_assayed = True
+    b.tutorial.advance(game.body, b)
+    b.standing_edit = True
+    b.editing = 0
+    b.tut_shelf = True
+    b.tutorial.advance(game.body, b)
+    check("and doing what it asks reaches the last one",
+          b.tutorial.step == len(Tutorial.STEPS) - 1,
+          "reached %d/%d" % (b.tutorial.step + 1, len(Tutorial.STEPS)))
+
+
+def t_sandbox_grants_the_vocabulary():
+    from ..organs import ALL
+    from ..body import GRID_H, GRID_W
+    game, b = _bench()
+    have = {o.key for o in game.body.pack} | {
+        o.key for o in game.body.installed()}
+    check("sandbox hands you one of every organ",
+          have >= {t.key for t in ALL},
+          "missing %s" % sorted({t.key for t in ALL} - have)[:4])
+    check("and opens every socket",
+          len(game.body.cells) == GRID_W * GRID_H, str(len(game.body.cells)))
+
+
 def t_criterion_is_stated_once():
     from ..lore import FRAGMENTS
     hits = [k for k, f in FRAGMENTS.items() if "CRITERION" in f.text]
