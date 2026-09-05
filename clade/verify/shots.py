@@ -112,6 +112,24 @@ def main():
     _settle(game, 3.0)
     _save(game, "08_the_lattice")
 
+    # --- something winding up. the whole point of the combat rewrite:
+    #     a tell you can see and a heading that locks before it fires.
+    _goto(game, "c_mouth")
+    _settle(game, 0.6)
+    winding = None
+    for _ in range(2400):
+        _settle(game, 1 / 60.0)
+        winding = next((c for c in game.world.creatures
+                        if c.phase == "windup" and c.phase_frac > 0.45), None)
+        if winding is not None:
+            break
+    _save(game, "08b_windup")
+
+    # --- and a region working on a body that cannot answer it.
+    _goto(game, "l_rack")
+    _settle(game, 2.0)
+    _save(game, "08c_hazard")
+
     # --- the bench, with a real body and a real assay on screen.
     for key in ("gullet", "ember_gland", "salt_node", "muffle", "harmonic",
                 "fork", "sieve"):
@@ -128,6 +146,18 @@ def main():
     ok, _ = b.validate(trial)
     if ok:
         b.chains[0] = trial
+    # A real standing chain, so the half of the screen that stops this
+    # being a gun menu is actually populated.
+    for cell, key in (((0, 3), "siphon"), ((1, 3), "harmonic")):
+        if cell not in b.cells:
+            b.unlock(cell)
+        if b.organ_at(cell) is not None:
+            b.uninstall(cell)
+        b.install(cell, make(key))
+    standing = Chain([(0, 3), (1, 3)])
+    if b.validate(standing, standing=True)[0]:
+        b.standing[0] = standing
+    b.recompute_standing()
     game.state = BENCH
     game.bench.assay_chain = 0
     game.bench._run_assay()

@@ -44,11 +44,45 @@ BUOYANCY_GAIN = 3.4
 RESERVE_CAP = 100.0
 RESERVE_START = 40.0
 
+# ---------------------------------------------------------------------------
+# UPKEEP — the reason to do anything.
+#
+# The first build had none, and that single omission is what made the whole
+# game boring: ambient water refilled you faster than you could ever spend
+# it, so nothing was scarce, so nothing was needed, so there was no reason
+# to hunt, no reason to hurry, no reason to leave a room and no reason to
+# care about anything you built.
+#
+# Now you burn reserve continuously just by existing, and more for every
+# standing chain you run. Ambient absorption covers the base rate and
+# nothing beyond it. Everything else has to be taken out of something that
+# was alive.
+#
+# The intended rhythm: a full tank is about four idle minutes, about ninety
+# seconds with two standing chains running, and one good kill is worth
+# roughly half a tank. So you are always about two minutes from needing to
+# find something, and the deeper regions make that worse rather than better.
+BASE_UPKEEP = 0.45                  # reserve/sec, just for being awake
+STANDING_UPKEEP_PER_MAGNITUDE = 0.16
+AMBIENT_ABSORB = 0.95               # reserve/sec from rich water, scaled
+                                    # down by how thin the local water is
+STARVE_RATE = 6.5                   # viability/sec at an empty tank
+
+# What a corpse is worth. High on purpose: feeding has to be a genuine
+# solution to a genuine problem, or the pressure above is just a nuisance.
+CORPSE_YIELD = 2.1
+BITE_RATE = 34.0                    # reserve/sec while feeding
+
+# What a region's depth multiplies your whole upkeep by. The Sill costs
+# nearly twice what the Nursery does to be alive in, before you have paid
+# for a single standing chain — and the Sill is also the region that
+# demands one.
+PRESSURE = {"nursery": 1.0, "cisterns": 1.30, "lattice": 1.60, "sill": 1.95}
+
 VIABILITY_MAX = 100.0
-# Starvation. Running dry does not kill quickly — it kills *inevitably*,
-# which is a different and better feeling. You always have time to fix it
-# and you always know you are on a clock.
-STARVE_RATE = 3.6              # viability/sec at zero reserve
+# Starvation kills inevitably rather than quickly, which is a different and
+# better feeling: you always have time to fix it and you always know you
+# are on a clock.
 IMBALANCE_RATE = 2.2           # viability/sec at maximum composition strain
 
 # ------------------------------------------------------------------ heat
@@ -102,6 +136,47 @@ SPARK_PER_MAGNITUDE = 1.20
 # Four or five landed attacks is long enough to notice, decide and run,
 # which is the fight this game is supposed to be having.
 HOSTILE_DAMAGE = 0.45
+
+# ---------------------------------------------------------------------------
+# COMBAT GRAMMAR
+#
+# Every attack in the game now runs WINDUP -> COMMIT -> RECOVER.
+#
+# The first build had none of this. A creature simply fired on a cooldown,
+# instantly, in whatever direction you happened to be — so there was
+# nothing to read, nothing to dodge, no reason to watch anything, and no
+# way for a fight to be *good*. You could swim in circles and never be hit
+# or ever feel in danger, which is the exact failure the player reported.
+#
+# Windup is visible and it stirs the water. The heading is locked at the
+# end of it and cannot be re-aimed, so moving actually works. Recover is a
+# real vulnerability window, and hitting something in it hurts much more —
+# which turns every enemy into a rhythm rather than a damage sponge.
+WINDUP_STIR = 240.0            # how hard a winding-up creature pulls water
+RECOVER_VULNERABLE = 2.1       # damage multiplier during recovery
+STAGGER_ON_RECOVER_HIT = 0.7   # seconds added to recovery when punished
+
+# ---------------------------------------------------------------------------
+# REGION HAZARDS — the world itself, working against you.
+#
+# Each is answered by a *standing chain*, which is what finally makes the
+# Bench more than a weapon designer: below the Nursery you cannot simply
+# survive being somewhere, you have to have built a body that can.
+HAZARD = {
+    "nursery": {},
+    # Sediment clogs your intakes. Everything you draw is halved until you
+    # run something gentle enough to keep yourself clear.
+    "cisterns": {"clog": 0.55, "answer": "gentle", "need": 0.45,
+                 "note": "the sediment is in your intakes"},
+    # Live water. It is grounding you through itself, continuously, and
+    # only a standing haze of sediment or a dense shell stops it.
+    "lattice": {"shock": 3.1, "answer": "murk", "need": 0.9,
+                "note": "the water here is carrying current, and so are you"},
+    # Cold. It does not damage you so much as slow you and take you apart,
+    # and the only answer is to be burning.
+    "sill": {"chill": 2.6, "slow": 0.62, "answer": "heat", "need": 0.8,
+             "note": "you are going cold"},
+}
 
 # Divergence: 0 = perfectly balanced humours, 1 = a single humour.
 # This is the two-sided key. Below GENTLE_BELOW a charge counts as living

@@ -59,19 +59,24 @@ class Player:
         # Thrust. Heavy bodies are slow to start and hard to stop, which is
         # the whole physical argument for keeping your composition light
         # when you are somewhere frightening.
-        accel = C.PLAYER_ACCEL * mods["speed"] / max(0.6, mods["weight"])
+        accel = (C.PLAYER_ACCEL * mods["speed"]
+                 * (1.0 + min(0.45, self.body.standing_fx["jolt"] * 0.09))
+                 / max(0.6, mods["weight"]))
         ml = math.hypot(move[0], move[1])
         if ml > 1e-4:
             self.vel[0] += move[0] / ml * accel * dt
             self.vel[1] += move[1] / ml * accel * dt
             self.facing = [move[0] / ml, move[1] / ml]
 
-        # Buoyancy. Your brine fraction against neutral. This is traversal:
-        # a body full of salt walks the floor and a body that has learned to
-        # carry a negative number climbs.
+        # Buoyancy. Your brine fraction against neutral, minus whatever a
+        # standing chain is doing about it. This is traversal: a body full
+        # of salt walks the floor, and a body running an inverted brine
+        # chain climbs — which means the game's "double jump" is something
+        # you designed at the Bench rather than something you found.
         f = self.body.reserve.fractions()
         fill = self.body.reserve.magnitude / self.body.reserve_cap
         heaviness = (f[BRINE] + f[SILT] * 0.7 - C.NEUTRAL_BRINE) * (0.35 + fill)
+        heaviness -= self.body.standing_fx["lift"] * 0.055
         self.vel[1] += heaviness * C.GRAVITY * dt
 
         cur = room.fields.current_at(self.pos)
@@ -82,7 +87,10 @@ class Player:
         self.vel[0] *= drag
         self.vel[1] *= drag
 
-        cap = C.PLAYER_MAX_SPEED * mods["speed"]
+        # Nerve makes everything about you quicker, including the parts
+        # you would rather were not.
+        quick = 1.0 + min(0.45, self.body.standing_fx["jolt"] * 0.09)
+        cap = C.PLAYER_MAX_SPEED * mods["speed"] * quick
         sp = math.hypot(*self.vel)
         if sp > cap:
             k = cap / sp
@@ -91,6 +99,21 @@ class Player:
 
         self._move(dt, room)
         self.body.on_floor = room.solid_at(self.pos[0], self.pos[1] + 22.0)
+
+        # Your own wake. Fast water off your flank is both a real current
+        # other things drift in and a thing that can be followed.
+        speed = math.hypot(self.vel[0], self.vel[1])
+        if speed > C.PLAYER_MAX_SPEED * 0.45:
+            k = speed / C.PLAYER_MAX_SPEED
+            world.room.fields.add_current(
+                self.pos, 30.0,
+                (-self.vel[0] * 0.22 * dt, -self.vel[1] * 0.22 * dt))
+            # Cubed, not squared. Disturbance bleeds off at 2.4/s, so a
+            # squared curve made *cruising* louder than the room could
+            # forget and every journey ended with the Apex awake. Cubed
+            # puts the crossover right at the top of the speed range:
+            # travelling is quiet, fleeing is not.
+            world.add_disturbance(k * k * k * 3.4 * dt, self.pos)
 
         self._suffer(dt, world)
         self.body.update(dt, world, tuple(self.pos))
@@ -142,6 +165,17 @@ class Player:
             self.body.feed(take)
             return False
         self.surge_timer = 0.55
+        torn = 0
+        for c in world.creatures:
+            if getattr(c, "grabbed", False):
+                c.grabbed = False
+                c.phase = None
+                c.cooldown = 1.8
+                c.vel[0] -= self.facing[0] * 260.0
+                c.vel[1] -= self.facing[1] * 260.0
+                torn += 1
+        if torn:
+            world.flash_event("you tore it off")
         d = self.facing
         power = 340.0 + take[BRINE] * 26.0
         self.vel[0] += d[0] * power
@@ -164,7 +198,7 @@ class Player:
             return None
         self.biting = target
         self.bite_time += dt
-        got = target.drain(26.0 * dt)
+        got = target.drain(C.BITE_RATE * dt)
         if got is not None and got.magnitude > 0.0:
             self.body.feed(got)
         if target.spent and not target.claimed:

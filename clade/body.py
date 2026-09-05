@@ -37,6 +37,15 @@ from .organs import (
 
 GRID_W, GRID_H = 6, 5
 
+# Four chains you fire, two you *run*. The second number is the entire
+# answer to "the Bench is only a weapon designer": a standing chain is not
+# an attack, it is a thing your body does continuously — burning to stay
+# warm, hazing to stay hidden, tending itself, or hauling its own weight
+# upward — and every one of them costs a socket an attack could have used
+# and reserve you have to go and kill something for.
+N_ACTIVE = 4
+N_STANDING = 2
+
 # What you wake up able to use. The rest of the body is there, visibly,
 # from the first minute — you can see the empty sockets and you can see how
 # many there are, which is a promise the game keeps.
@@ -89,12 +98,36 @@ class Chain:
 class Body:
     def __init__(self):
         self.cells = {c: None for c in STARTING_CELLS}
-        self.chains = [Chain(), Chain(), Chain(), Chain()]
+        self.chains = [Chain() for _ in range(N_ACTIVE)]
+        self.standing = [Chain() for _ in range(N_STANDING)]
+        self.standing_fx = _EMPTY_STANDING.copy()
+        self._standing_timer = 0.0
+        self.upkeep = C.BASE_UPKEEP
+        self.clog = 0.0        # region hazard: fraction of intake lost
+        # Pressure. Set by the region you are in, and it multiplies
+        # everything your body costs to run.
+        #
+        # Without it the game has no escalation at all: a competent player
+        # who feeds sits at a full tank forever, in every region, so the
+        # scarcity that is supposed to drive the whole loop stops existing
+        # about twenty minutes in. Depth is the thing that makes the same
+        # body progressively unaffordable, which is what turns "hunt when
+        # you feel like it" into "you cannot stay down here for free".
+        self.pressure = 1.0
         self.reserve = Charge(6.0, 22.0, 8.0, 4.0)
         self.reserve_cap = C.RESERVE_CAP
         self.viability = C.VIABILITY_MAX
         self.pack = []               # organs you own but have not installed
-        self.absorb_rate = 3.4       # ambient uptake, per second
+        # Ambient uptake, per second. It is *deliberately* less than the
+        # cost of a body that is actually doing anything: it covers the
+        # base rate of existing and nothing beyond it, so every standing
+        # chain you run has to be paid for out of something that was alive.
+        #
+        # This was left at 3.4 while the whole upkeep economy was written
+        # around it, which meant ambient water out-earned a working body
+        # four to one and none of the scarcity existed. Nothing about the
+        # game looked wrong; it was just free.
+        self.absorb_rate = C.AMBIENT_ABSORB
         self.nerve = len(STARTING_CELLS)
         self._mods = body_modifiers(self.reserve)
         self.last_fire_log = []      # for the Assay
@@ -148,20 +181,32 @@ class Body:
             out.append(o)
         return out
 
-    def validate(self, chain: Chain):
+    def validate(self, chain: Chain, standing=False):
         """Returns (ok, reason). The reasons are written to be read by a
         player mid-surgery, so they name the missing thing rather than the
-        rule that was broken."""
+        rule that was broken.
+
+        A standing chain has no vent, and that is the whole distinction
+        between the two kinds: a chain that ends in a vent throws what it
+        made at the world, and a chain that does not ends in *you*."""
         organs = self.chain_organs(chain)
         if not organs:
             return False, "nothing routed"
         if len(organs) < 2:
-            return False, "a chain needs a way in and a way out"
+            return False, ("a standing chain needs an intake and at least "
+                           "one thing to do with it" if standing else
+                           "a chain needs a way in and a way out")
         for a, b in zip(chain.cells, chain.cells[1:]):
             if abs(a[0] - b[0]) + abs(a[1] - b[1]) != 1:
                 return False, "the path breaks between two cells"
         if organs[0].role != INTAKE:
             return False, "it has to start with something that takes in"
+        if standing:
+            for o in organs[1:]:
+                if o.role != TRANSFORM:
+                    return False, ("a standing chain cannot have a vent in "
+                                   "it — it feeds you, not the water")
+            return True, "running"
         if organs[-1].role != VENT:
             return False, "it has to end with something that lets out"
         for o in organs[1:-1]:
@@ -179,12 +224,32 @@ class Body:
 
     # ------------------------------------------------------------- reserve
 
+    def peek_reserve(self, amount, purify=False, floor_only=False) -> Charge:
+        """What tap_reserve *would* return, without taking it."""
+        if floor_only and not self.on_floor:
+            amount *= 0.25
+        have = self.reserve.magnitude
+        if have < 1e-6:
+            return Charge()
+        take = min(amount, have)
+        out = Charge()
+        if purify:
+            d = self.reserve.dominant
+            out.v[d] = min(take, self.reserve[d])
+        else:
+            f = self.reserve.fractions()
+            for i in range(N_HUMOURS):
+                out.v[i] = take * f[i]
+        return out
+
     def tap_reserve(self, amount, purify=False, floor_only=False) -> Charge:
         """Withdraw from the tank. Composition of the withdrawal follows the
         composition of the tank, so what you are is what you fire — which is
         why eating things changes your weapons and not just your total."""
         if floor_only and not self.on_floor:
             amount *= 0.25
+        if self.clog > 0.0:
+            amount *= max(0.15, 1.0 - self.clog)
         have = self.reserve.magnitude
         if have < 1e-6:
             return Charge()
@@ -335,6 +400,90 @@ class Body:
             if fired:
                 o.integrity = max(0.0, o.integrity - 0.00035)
 
+    # --------------------------------------------------------- standing
+
+    def recompute_standing(self):
+        """What your standing chains are doing to you, and what they cost.
+
+        Run dry — the chains are measured, not fired — and the result is
+        the *sum* of their resolved effects, applied continuously in
+        update(). Every channel is read straight off the existing effect
+        rules, so a standing chain does exactly what the same chain would
+        do to something you shot with it, only to you and slowly.
+
+            heat    you burn. it keeps the cold out and it lights you up.
+            murk    you trail sediment. it hides you and it grounds you.
+            gentle  you tend yourself. slow, real regeneration.
+            brine   you get heavier, or — inverted — you rise.
+            jolt    everything about you cycles faster, and hurts more.
+            caustic you dissolve what you touch.
+        """
+        fx = _EMPTY_STANDING.copy()
+        cost = 0.0
+        for ch in self.standing:
+            ok, _ = self.validate(ch, standing=True)
+            if not ok:
+                continue
+            organs = self.chain_organs(ch)
+            if any(o.seized for o in organs):
+                continue
+            ctx = ChainContext(self, None, None, None)
+            ctx.dry = True
+            ctx.heat_scale = 0.0     # charged separately, below
+            charge = organs[0].apply(Charge(), ctx)
+            if ctx.aborted or charge.magnitude < 1e-9:
+                continue
+            # organs[1:], not organs[1:-1]. A standing chain has no vent,
+            # so its last organ is a transform that has to run — slicing it
+            # off (copied from the active-chain path, where the last organ
+            # really is the vent) silently dropped the final stage of every
+            # standing chain in the game. The symptom was subtle and
+            # miserable: a chain whose last organ was the Harmonic produced
+            # no gentleness at all, so the Cisterns had a correct answer
+            # that did not work and no way to tell why.
+            for o in organs[1:]:
+                if o.type is BLADDER:
+                    continue
+                charge = o.apply(charge, ctx)
+                if ctx.aborted:
+                    break
+            if ctx.aborted:
+                continue
+            eff = resolve(charge)
+            fx["heat"] += eff.heat
+            fx["murk"] += eff.murk
+            fx["gentle"] += eff.gentle
+            fx["jolt"] += eff.jolt
+            fx["caustic"] += eff.caustic
+            fx["lift"] += eff.lift
+            fx["light"] += eff.light
+            fx["magnitude"] += charge.magnitude
+            cost += charge.magnitude * C.STANDING_UPKEEP_PER_MAGNITUDE
+        self.standing_fx = fx
+        self.upkeep = (C.BASE_UPKEEP + cost) * self.pressure
+        return fx
+
+    def _run_standing(self, dt):
+        """Pay for the standing chains and take what they give.
+
+        Upkeep comes out first and comes out whatever happens: a body that
+        cannot afford what it is running starves while running it, which is
+        the correct and unpleasant answer."""
+        fx = self.standing_fx
+        if self.upkeep > 0.0:
+            self.tap_reserve(self.upkeep * dt)
+        if fx["gentle"] > 0.0:
+            self.viability += fx["gentle"] * 0.55 * dt
+        # Running hot is not free: the organs doing it warm up like any
+        # others, which is what stops a permanent furnace from being
+        # strictly better than a switchable one.
+        if fx["magnitude"] > 0.0:
+            for ch in self.standing:
+                for cell in ch.cells:
+                    o = self.cells.get(cell)
+                    if o is not None:
+                        o.heat += o.type.heat * 0.22 * dt
+
     # ------------------------------------------------------------- update
 
     def update(self, dt, world=None, pos=None):
@@ -343,6 +492,12 @@ class Body:
         for ch in self.chains:
             if ch.timer > 0.0:
                 ch.timer = max(0.0, ch.timer - dt)
+
+        self._standing_timer -= dt
+        if self._standing_timer <= 0.0:
+            self._standing_timer = 0.5
+            self.recompute_standing()
+        self._run_standing(dt)
 
         self._thermal(dt, world, pos)
 
@@ -356,7 +511,10 @@ class Body:
             self.viability -= C.STARVE_RATE * dt
 
         if world is not None and pos is not None:
-            got = world.ambient_draw(pos, self.absorb_rate * dt)
+            # Ambient uptake covers the base rate and nothing beyond it.
+            # Everything else has to come out of something that was alive.
+            rate = self.absorb_rate * max(0.15, 1.0 - self.clog)
+            got = world.ambient_draw(pos, rate * dt)
             if got is not None:
                 self.feed(got)
 
@@ -424,8 +582,12 @@ class Body:
         the organs. This is the number that decides whether you are a thing
         in the dark or a lamp with legs."""
         f = self.reserve.fractions()
-        return f[ICHOR] * (self.reserve.magnitude / self.reserve_cap) + \
-            min(1.0, self.total_heat / (ORGAN_SEIZE * 3.0)) * 0.6
+        return (f[ICHOR] * (self.reserve.magnitude / self.reserve_cap)
+                + min(1.0, self.total_heat / (ORGAN_SEIZE * 3.0)) * 0.6
+                # A body that is burning to stay warm is a body that can be
+                # seen from across a room. There is no way to have the one
+                # without the other, and in the Sill you need the one.
+                + max(0.0, self.standing_fx["light"]) * 0.10)
 
     @property
     def sight(self):
@@ -433,6 +595,7 @@ class Body:
 
     def to_dict(self):
         return {
+            "standing": [c.to_dict() for c in self.standing],
             "cells": [
                 {"c": list(k), "organ": (v.to_dict() if v else None)}
                 for k, v in self.cells.items()
@@ -458,13 +621,20 @@ class Body:
             b.cells[cell] = org
         b.nerve = len(b.cells)
         b.chains = [Chain.from_dict(c) for c in d.get("chains", [])] or b.chains
-        while len(b.chains) < 4:
+        while len(b.chains) < N_ACTIVE:
             b.chains.append(Chain())
+        b.standing = [Chain.from_dict(c) for c in d.get("standing", [])]
+        while len(b.standing) < N_STANDING:
+            b.standing.append(Chain())
         b.reserve = Charge.of(d.get("reserve", [10, 10, 10, 10]))
         b.viability = d.get("viability", C.VIABILITY_MAX)
         b.pack = [make(o["key"]) for o in d.get("pack", [])]
         return b
 
+
+_EMPTY_STANDING = {"heat": 0.0, "murk": 0.0, "gentle": 0.0, "jolt": 0.0,
+                   "caustic": 0.0, "lift": 0.0, "light": 0.0,
+                   "magnitude": 0.0}
 
 ORGAN_SEIZE = C.ORGAN_SEIZE_AT
 ORGAN_COOL = C.ORGAN_COOL_AT
@@ -489,8 +659,16 @@ def starting_body() -> Body:
         ((3, 1), "spiracle"),
         ((1, 2), "salt_node"),
         ((2, 2), "settling_sac"),
+        ((2, 3), "siphon"),
     ]
     for cell, key in layout:
         b.install(cell, make(key))
     b.chains[0] = Chain([(1, 1), (2, 1), (3, 1)], "sting")
+    # And one standing chain, wired badly on purpose. It does something
+    # mild and faintly useful (a haze you trail), it is visibly costing you
+    # upkeep from the first second, and it is the worst use of those two
+    # sockets in the game. A player who never opens the Bench survives the
+    # Nursery on it and nothing below.
+    b.standing[0] = Chain([(2, 3), (2, 2)], "haze")
+    b.recompute_standing()
     return b
